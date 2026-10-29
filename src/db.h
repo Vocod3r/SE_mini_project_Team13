@@ -49,6 +49,8 @@ int  db_book_appointment(int user_id, int patient_id, int doctor_id,
 int  db_reschedule_appointment(int user_id, int appt_id, const char *new_date, const char *new_slot);
 int  db_cancel_appointment(int user_id, int appt_id);
 int  db_get_schedule(int doctor_id, const char *date);
+int  db_get_schedule_week(int doctor_id, const char *start_date);  /* F-023: 7 days, -1 bad date */
+int  db_print_appt_slip(int appt_id);                              /* F-024: 0 ok, -1 not found, -2 not active */
 int  db_queue_count(int doctor_id, const char *date);
 
 /* Consultation (F-013, F-040, F-041) */
