@@ -221,6 +221,72 @@ int db_get_schedule(int did, const char *date) {
     return n;
 }
 
+/* F-023 (weekly view): 7 days starting at start_date. Returns row count, -1 error / bad date. */
+int db_get_schedule_week(int did, const char *start_date) {
+    sqlite3_stmt *st;
+    const char *sql =
+        "SELECT a.appt_date,a.time_slot,p.name,a.status FROM appointments a "
+        "JOIN patients p ON p.patient_id=a.patient_id "
+        "WHERE a.doctor_id=?1 "
+        "AND a.appt_date BETWEEN date(?2) AND date(?2,'+6 days') "
+        "ORDER BY a.appt_date,a.time_slot;";
+    if (!start_date) return -1;
+    /* SQLite's date() yields NULL for anything that is not a real YYYY-MM-DD date */
+    if (sqlite3_prepare_v2(g_db, "SELECT date(?1)=?1;", -1, &st, 0) != SQLITE_OK) return -1;
+    sqlite3_bind_text(st, 1, start_date, -1, SQLITE_STATIC);
+    int valid = (sqlite3_step(st) == SQLITE_ROW && sqlite3_column_int(st, 0) == 1);
+    sqlite3_finalize(st);
+    if (!valid) return -1;
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) return -1;
+    sqlite3_bind_int(st, 1, did);
+    sqlite3_bind_text(st, 2, start_date, -1, SQLITE_STATIC);
+    int n = 0;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        printf("%s | %s | %s | %s\n",
+               sqlite3_column_text(st, 0), sqlite3_column_text(st, 1),
+               sqlite3_column_text(st, 2), sqlite3_column_text(st, 3));
+        n++;
+    }
+    sqlite3_finalize(st);
+    return n;
+}
+
+/* F-024: prints a confirmation slip. Returns 0 ok, -1 not found / error,
+ * -2 appointment is not active (Cancelled or Completed). */
+int db_print_appt_slip(int appt_id) {
+    sqlite3_stmt *st;
+    const char *sql =
+        "SELECT a.appt_id,p.patient_id,p.name,d.name,d.specialization,d.consultation_fee,"
+        "a.appt_date,a.time_slot,a.status "
+        "FROM appointments a JOIN patients p ON p.patient_id=a.patient_id "
+        "JOIN doctors d ON d.doctor_id=a.doctor_id WHERE a.appt_id=?;";
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) return -1;
+    sqlite3_bind_int(st, 1, appt_id);
+    int rc = -1;
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        const char *status = (const char *)sqlite3_column_text(st, 8);
+        if (strcmp(status, "Booked") != 0 && strcmp(status, "Rescheduled") != 0) {
+            rc = -2;
+        } else {
+            printf("==============================\n");
+            printf("   APPOINTMENT CONFIRMATION\n");
+            printf("==============================\n");
+            printf("Appointment ID : %d\n", sqlite3_column_int(st, 0));
+            printf("Patient        : %s (ID %d)\n", sqlite3_column_text(st, 2), sqlite3_column_int(st, 1));
+            printf("Doctor         : %s (%s)\n", sqlite3_column_text(st, 3),
+                   sqlite3_column_text(st, 4) ? (const char *)sqlite3_column_text(st, 4) : "-");
+            printf("Date           : %s\n", sqlite3_column_text(st, 6));
+            printf("Time           : %s\n", sqlite3_column_text(st, 7));
+            printf("Fee            : %.2f\n", sqlite3_column_double(st, 5));
+            printf("Status         : %s\n", status);
+            printf("==============================\n");
+            rc = 0;
+        }
+    }
+    sqlite3_finalize(st);
+    return rc;
+}
+
 /* F-061 */
 int db_backup(const char *dest) {
     sqlite3 *dst;
