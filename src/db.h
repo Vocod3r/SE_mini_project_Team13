@@ -104,6 +104,10 @@ int  db_restore_backup(int user_id, const char *role, const char *backup_path,
                        const char *dest_path);
 int  db_health_check(void);
 int  db_get_prescriptions(int user_id, const char *role, int patient_id);
+/* Doctor/Admin only; 0 success, -1 error, -3 not permitted. */
+int  db_update_prescription(int user_id, const char *role, int rx_id,
+                            const char *medicines, const char *dosage, const char *notes);
+int  db_delete_prescription(int user_id, const char *role, int rx_id);
 /* Passing records=NULL and capacity=0 returns the total count. Otherwise the
  * persisted staff role is checked and all rows must fit in capacity. */
 int  db_get_prescription_records(int user_id, const char *role, int patient_id,

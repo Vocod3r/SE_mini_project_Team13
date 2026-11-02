@@ -34,7 +34,7 @@ The final performance fixture asserted exactly 10,000 patient rows. In the stand
 - **TC-Rx-02 / HMS-F-041 / AC-041:** two prescriptions with deliberately reversed visit dates are returned oldest-to-newest; no-history behavior is also asserted.
 - **TC-Rep-02 / HMS-F-061 / AC-061:** test creates a backup, opens the backup as a separate SQLite database, compares patient/schema data, runs integrity validation, and checks failure for a destination under a nonexistent directory.
 - **TC-Perf-01 / HMS-NF-001 / AC-NF-001:** exactly 10,000 patient records are confirmed before timing two patient searches; each combined run is below 2 seconds.
-- **TC-Sec-03 / HMS-SR-003 / AC-SR-003:** patient, appointment, and prescription create/update/delete audit rows are checked; injected audit failures are verified to roll back associated data writes.
+- **TC-Sec-03 / HMS-SR-003 / AC-SR-003:** Sprint 7 verifies timestamp, actor, action, and record IDs for clinical writes, create/update/delete audit outcomes, failure rollback, and append-only DML guards in test_audit and test_core.
 - **TC-Sec-01/02/04:** authentication checks salted PBKDF2 storage, legacy migration, authorization against the persisted staff role, and SQL-safe account lookup. Full fuzz testing is not performed.
 
 ## Platform and execution limits
@@ -42,7 +42,7 @@ The final performance fixture asserted exactly 10,000 patient rows. In the stand
 - The full sanitizer pipeline was executed in Ubuntu 24.04 via Docker. Windows/MSYS2 ran the normal suite earlier, before the final exact-10,000-row assertion and cleanup-only test edits; the final exact test state was verified by Linux `make ci`.
 - Windows-native sanitizer execution was not available because the local MinGW toolchain lacks ASan/UBSan libraries.
 - Performance evidence covers patient lookup only, not appointment lookup or repeated 50-iteration load.
-- Crash/power-loss recovery, cross-platform Windows/Linux parity, audit-log tamper prevention, full fuzzing, and a UI-driven authorization workflow remain unverified.
+- Crash/power-loss recovery, cross-platform Windows/Linux parity, full fuzzing and comprehensive read-access auditing remain unverified; Sprint 7 verifies DML tamper guards, while direct schema/file-owner tampering remains possible.
 - `test_db.c` remains a print-based smoke test; its exit code alone does not validate each printed expectation.
 
 ## Sprint 2 final verification
@@ -65,3 +65,8 @@ The Ubuntu 24.04 Docker make ci run exited **0** with nine test executables. All
 ## Sprint 6 final verification
 
 The Ubuntu 24.04 Docker `make ci` run exited **0** with ten test executables. All ten passed in both standard and ASan/UBSan runs, including the new app-service/bootstrap test; no sanitizer findings or compiler warnings were reported. A fresh-database console smoke walkthrough completed first-Admin bootstrap, Admin login, role menu display, sign-out, and quit. `git diff --check` passed. The smoke test used piped input and therefore verifies workflow behavior, not interactive password-echo suppression; masked entry is implemented for terminal sessions. See `SPRINT_6_COMPLETION_REPORT.md` for remaining acceptance gaps.
+
+
+## Sprint 7 final verification
+
+The Ubuntu 24.04 Docker `make ci` run exited **0** with eleven test executables. All eleven passed in both standard and ASan/UBSan runs, including `test_audit`; there were no sanitizer findings or compiler warnings. The audit tests verify preservation of a pre-existing audit row during schema initialization, timestamp/user/action records, rollback of data changes when audit inserts fail, Doctor/Admin authorization for prescription changes, and rejection of audit-row UPDATE/DELETE statements. These SQLite triggers are an application-level DML guard and do not prevent a database file/schema owner from dropping them. `git diff --check` passed before staging.

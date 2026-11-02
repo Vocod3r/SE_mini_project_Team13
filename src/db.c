@@ -133,19 +133,21 @@ static int actor_is_staff(int user_id, const char *claimed_role) {
 int db_add_doctor(int user_id, const char *role, const char *name,
                   const char *spec, double fee) {
     if (!actor_role_is(user_id, role, "Admin", NULL)) return -3;
-    if (!name || !*name || strlen(name) > 100 || fee < 0) return -1;
+    if (!name || !*name || strlen(name) > 100 || fee < 0 || !begin_write()) return -1;
     sqlite3_stmt *st;
     const char *sql =
         "INSERT INTO doctors(name,specialization,consultation_fee) VALUES(?,?,?);";
-    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) return -1;
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) { rollback_write(); return -1; }
     sqlite3_bind_text(st, 1, name, -1, SQLITE_STATIC);
     sqlite3_bind_text(st, 2, spec, -1, SQLITE_STATIC);
     sqlite3_bind_double(st, 3, fee);
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
-    if (rc != SQLITE_DONE) return -1;
+    if (rc != SQLITE_DONE) { rollback_write(); return -1; }
     int id = (int)sqlite3_last_insert_rowid(g_db);
-    db_log_audit(user_id, "CREATE", "doctors", id);
+    if (db_log_audit(user_id, "CREATE", "doctors", id) != 0 || !commit_write()) {
+        rollback_write(); return -1;
+    }
     return id;
 }
 
@@ -627,22 +629,24 @@ static int can_manage_staff(int actor_id) {
 int db_create_staff(int user_id, const char *role, const char *username,
                     const char *hash, const char *salt, const char *new_role) {
     if (!role || strcmp(role, "Admin") != 0 || !can_manage_staff(user_id)) return -3;
-    if (!username || !*username || strlen(username) > 60 || !hash || !salt) return -1;
+    if (!username || !*username || strlen(username) > 60 || !hash || !salt || !begin_write()) return -1;
     if (!new_role || !(strcmp(new_role, "Admin") == 0 || strcmp(new_role, "Doctor") == 0 ||
                        strcmp(new_role, "Receptionist") == 0)) return -1;
     sqlite3_stmt *st;
     const char *sql = "INSERT INTO staff(username,password_hash,salt,role) VALUES(?,?,?,?);";
-    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) return -1;
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) { rollback_write(); return -1; }
     sqlite3_bind_text(st, 1, username, -1, SQLITE_STATIC);
     sqlite3_bind_text(st, 2, hash, -1, SQLITE_STATIC);
     sqlite3_bind_text(st, 3, salt, -1, SQLITE_STATIC);
     sqlite3_bind_text(st, 4, new_role, -1, SQLITE_STATIC);
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
-    if (rc == SQLITE_CONSTRAINT) return -2;          /* username already exists */
-    if (rc != SQLITE_DONE) return -1;
+    if (rc == SQLITE_CONSTRAINT) { rollback_write(); return -2; } /* username already exists */
+    if (rc != SQLITE_DONE) { rollback_write(); return -1; }
     int id = (int)sqlite3_last_insert_rowid(g_db);
-    db_log_audit(user_id, "CREATE", "staff", id);
+    if (db_log_audit(user_id, "CREATE", "staff", id) != 0 || !commit_write()) {
+        rollback_write(); return -1;
+    }
     return id;
 }
 
@@ -704,12 +708,12 @@ int db_reset_failed_login(const char *username) {
 int db_update_doctor(int user_id, const char *role, int did, const char *name,
                      const char *spec, double fee, const char *start, const char *end) {
     if (!actor_role_is(user_id, role, "Admin", NULL)) return -3;
-    if (!name || !*name || strlen(name) > 100 || fee < 0) return -1;
+    if (!name || !*name || strlen(name) > 100 || fee < 0 || !begin_write()) return -1;
     sqlite3_stmt *st;
     const char *sql =
         "UPDATE doctors SET name=?,specialization=?,consultation_fee=?,work_start=?,work_end=? "
         "WHERE doctor_id=?;";
-    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) return -1;
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) { rollback_write(); return -1; }
     sqlite3_bind_text(st, 1, name, -1, SQLITE_STATIC);
     sqlite3_bind_text(st, 2, spec, -1, SQLITE_STATIC);
     sqlite3_bind_double(st, 3, fee);
@@ -718,22 +722,27 @@ int db_update_doctor(int user_id, const char *role, int did, const char *name,
     sqlite3_bind_int(st, 6, did);
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
-    if (rc != SQLITE_DONE || sqlite3_changes(g_db) == 0) return -1;
-    db_log_audit(user_id, "UPDATE", "doctors", did);
+    if (rc != SQLITE_DONE || sqlite3_changes(g_db) == 0) { rollback_write(); return -1; }
+    if (db_log_audit(user_id, "UPDATE", "doctors", did) != 0 || !commit_write()) {
+        rollback_write(); return -1;
+    }
     return 0;
 }
 
 /* Fails (returns -1) if the doctor still has appointments, because of the foreign key */
 int db_remove_doctor(int user_id, const char *role, int did) {
     if (!actor_role_is(user_id, role, "Admin", NULL)) return -3;
+    if (!begin_write()) return -1;
     sqlite3_stmt *st;
     if (sqlite3_prepare_v2(g_db, "DELETE FROM doctors WHERE doctor_id=?;", -1, &st, 0) != SQLITE_OK)
-        return -1;
+        { rollback_write(); return -1; }
     sqlite3_bind_int(st, 1, did);
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
-    if (rc != SQLITE_DONE || sqlite3_changes(g_db) == 0) return -1;
-    db_log_audit(user_id, "DELETE", "doctors", did);
+    if (rc != SQLITE_DONE || sqlite3_changes(g_db) == 0) { rollback_write(); return -1; }
+    if (db_log_audit(user_id, "DELETE", "doctors", did) != 0 || !commit_write()) {
+        rollback_write(); return -1;
+    }
     return 0;
 }
 
@@ -900,6 +909,7 @@ int db_get_patient_history(int pid) {
 /* F-050: amount is taken from the doctor's fee; only one bill per visit */
 int db_create_bill(int user_id, const char *role, int visit_id) {
     if (!actor_role_is(user_id, role, "Receptionist", "Admin")) return -3;
+    if (!begin_write()) return -1;
     sqlite3_stmt *st;
     const char *sql =
         "INSERT INTO bills(visit_id,amount) "
@@ -907,29 +917,34 @@ int db_create_bill(int user_id, const char *role, int visit_id) {
         "JOIN appointments a ON a.appt_id=v.appt_id "
         "JOIN doctors d ON d.doctor_id=a.doctor_id "
         "WHERE v.visit_id=? AND NOT EXISTS (SELECT 1 FROM bills b WHERE b.visit_id=v.visit_id);";
-    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) return -1;
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) { rollback_write(); return -1; }
     sqlite3_bind_int(st, 1, visit_id);
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
-    if (rc != SQLITE_DONE || sqlite3_changes(g_db) == 0) return -1;
+    if (rc != SQLITE_DONE || sqlite3_changes(g_db) == 0) { rollback_write(); return -1; }
     int id = (int)sqlite3_last_insert_rowid(g_db);
-    db_log_audit(user_id, "CREATE", "bills", id);
+    if (db_log_audit(user_id, "CREATE", "bills", id) != 0 || !commit_write()) {
+        rollback_write(); return -1;
+    }
     return id;
 }
 
 /* F-051 */
 int db_set_payment_status(int user_id, const char *role, int bill_id, const char *status) {
     if (!actor_role_is(user_id, role, "Receptionist", "Admin")) return -3;
-    if (!status || !(strcmp(status, "Paid") == 0 || strcmp(status, "Pending") == 0)) return -1;
+    if (!status || !(strcmp(status, "Paid") == 0 || strcmp(status, "Pending") == 0) ||
+        !begin_write()) return -1;
     sqlite3_stmt *st;
     if (sqlite3_prepare_v2(g_db, "UPDATE bills SET payment_status=? WHERE bill_id=?;",
-                           -1, &st, 0) != SQLITE_OK) return -1;
+                           -1, &st, 0) != SQLITE_OK) { rollback_write(); return -1; }
     sqlite3_bind_text(st, 1, status, -1, SQLITE_STATIC);
     sqlite3_bind_int(st, 2, bill_id);
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
-    if (rc != SQLITE_DONE || sqlite3_changes(g_db) == 0) return -1;
-    db_log_audit(user_id, "UPDATE", "bills", bill_id);
+    if (rc != SQLITE_DONE || sqlite3_changes(g_db) == 0) { rollback_write(); return -1; }
+    if (db_log_audit(user_id, "UPDATE", "bills", bill_id) != 0 || !commit_write()) {
+        rollback_write(); return -1;
+    }
     return 0;
 }
 
@@ -1014,4 +1029,43 @@ int db_get_prescriptions(int user_id, const char *role, int pid) {
     }
     free(records);
     return fetched;
+}
+
+int db_update_prescription(int user_id, const char *role, int rx_id,
+                           const char *medicines, const char *dosage, const char *notes) {
+    if (!actor_role_is(user_id, role, "Doctor", "Admin")) return -3;
+    if (rx_id <= 0 || !medicines || !*medicines || strlen(medicines) > 255 ||
+        (dosage && strlen(dosage) > 255) || (notes && strlen(notes) > 511) || !begin_write())
+        return -1;
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(g_db,
+        "UPDATE prescriptions SET medicines=?,dosage=?,notes=? WHERE rx_id=?;",
+        -1, &st, NULL) != SQLITE_OK) { rollback_write(); return -1; }
+    sqlite3_bind_text(st, 1, medicines, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, dosage ? dosage : "", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, notes ? notes : "", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 4, rx_id);
+    int rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (rc != SQLITE_DONE || sqlite3_changes(g_db) == 0) { rollback_write(); return -1; }
+    if (db_log_audit(user_id, "UPDATE", "prescriptions", rx_id) != 0 || !commit_write()) {
+        rollback_write(); return -1;
+    }
+    return 0;
+}
+
+int db_delete_prescription(int user_id, const char *role, int rx_id) {
+    if (!actor_role_is(user_id, role, "Doctor", "Admin")) return -3;
+    if (rx_id <= 0 || !begin_write()) return -1;
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(g_db, "DELETE FROM prescriptions WHERE rx_id=?;",
+                           -1, &st, NULL) != SQLITE_OK) { rollback_write(); return -1; }
+    sqlite3_bind_int(st, 1, rx_id);
+    int rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (rc != SQLITE_DONE || sqlite3_changes(g_db) == 0) { rollback_write(); return -1; }
+    if (db_log_audit(user_id, "DELETE", "prescriptions", rx_id) != 0 || !commit_write()) {
+        rollback_write(); return -1;
+    }
+    return 0;
 }
