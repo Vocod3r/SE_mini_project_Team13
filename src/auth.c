@@ -62,6 +62,43 @@ static int is_admin_actor(sqlite3 *db, int actor_id) {
     return valid;
 }
 
+int create_initial_admin(sqlite3 *db, const char *username, const char *password) {
+    unsigned char salt_raw[PASSWORD_SALT_BYTES], hash_raw[PASSWORD_HASH_BYTES];
+    char salt[sizeof salt_raw * 2 + 1], hash[sizeof hash_raw * 2 + 1];
+    sqlite3_stmt *st = NULL;
+    int ok = 0;
+    if (!db || !username || !*username || strlen(username) > 60 ||
+        !password || !*password || strlen(password) > 1024) return 0;
+    if (RAND_bytes(salt_raw, sizeof salt_raw) != 1 ||
+        !derive_hash(password, salt_raw, hash_raw)) return 0;
+    to_hex(salt_raw, sizeof salt_raw, salt);
+    to_hex(hash_raw, sizeof hash_raw, hash);
+    if (sqlite3_exec(db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK) return 0;
+    if (sqlite3_prepare_v2(db, "SELECT count(*) FROM staff;", -1, &st, NULL) != SQLITE_OK ||
+        sqlite3_step(st) != SQLITE_ROW || sqlite3_column_int(st, 0) != 0) goto done;
+    sqlite3_finalize(st); st = NULL;
+    if (sqlite3_prepare_v2(db,
+        "INSERT INTO staff(username,password_hash,salt,role) VALUES(?,?,?,'Admin');",
+        -1, &st, NULL) != SQLITE_OK) goto done;
+    sqlite3_bind_text(st, 1, username, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, hash, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, salt, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st) != SQLITE_DONE) goto done;
+    sqlite3_finalize(st); st = NULL;
+    if (sqlite3_prepare_v2(db,
+        "INSERT INTO audit_log(user_id,action,table_name,record_id) VALUES(0,'BOOTSTRAP','staff',?);",
+        -1, &st, NULL) != SQLITE_OK) goto done;
+    sqlite3_bind_int(st, 1, (int)sqlite3_last_insert_rowid(db));
+    if (sqlite3_step(st) != SQLITE_DONE) goto done;
+    sqlite3_finalize(st); st = NULL;
+    if (sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) == SQLITE_OK) ok = 1;
+done:
+    sqlite3_finalize(st);
+    if (!ok) sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+    OPENSSL_cleanse(hash_raw, sizeof hash_raw);
+    return ok;
+}
+
 static int legacy_hash_matches(const char *password, const char *stored) {
     unsigned long hash = 5381;
     int c;

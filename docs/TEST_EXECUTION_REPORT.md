@@ -60,3 +60,8 @@ The final Sprint 4 full Ubuntu 24.04 Docker make ci run exited **0**. All eight 
 ## Sprint 5 final verification
 
 The Ubuntu 24.04 Docker make ci run exited **0** with nine test executables. All nine passed in both standard and ASan/UBSan runs. test_reliability verifies WAL/FULL setup, child-process exit during an open transaction, survival of committed rows, rollback of the interrupted row, and post-recovery integrity. Its POSIX harness ran on Ubuntu; the Windows branch is an explicit skip and is not counted as a pass. No sanitizer findings or compiler warnings were reported.
+
+
+## Sprint 6 final verification
+
+The Ubuntu 24.04 Docker `make ci` run exited **0** with ten test executables. All ten passed in both standard and ASan/UBSan runs, including the new app-service/bootstrap test; no sanitizer findings or compiler warnings were reported. A fresh-database console smoke walkthrough completed first-Admin bootstrap, Admin login, role menu display, sign-out, and quit. `git diff --check` passed. The smoke test used piped input and therefore verifies workflow behavior, not interactive password-echo suppression; masked entry is implemented for terminal sessions. See `SPRINT_6_COMPLETION_REPORT.md` for remaining acceptance gaps.

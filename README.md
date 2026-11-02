@@ -1,6 +1,6 @@
 # Hospital Management System — Team 13
 
-This repository contains the C/SQLite implementation and project documents for the HMS mini-project. The current checkout is an in-progress data-access prototype; the repository audit and requirement status are in [`docs/PROJECT_AUDIT.md`](docs/PROJECT_AUDIT.md).
+This repository contains a C/SQLite Hospital Management System with a menu-driven console application, role-based login, service-layer entry points, and a central data-access layer. Requirement coverage and remaining SRS gaps are tracked in [`docs/REQUIREMENT_TRACEABILITY.md`](docs/REQUIREMENT_TRACEABILITY.md) and [`docs/PROJECT_AUDIT.md`](docs/PROJECT_AUDIT.md).
 
 ## Project documents
 
@@ -23,4 +23,8 @@ make ci
 
 `make ci` runs compilation, the test executables, then a sanitizer build and test run. The checked-in GitHub Actions workflow runs this command on Ubuntu. The Makefile uses Unix shell commands and sanitizer flags; Windows build support has not yet been established.
 
-The Sprint 1 Linux CI run completed successfully, including the sanitizer pass. See [the test execution report](docs/TEST_EXECUTION_REPORT.md) for the exact command, results, measured lookups, and remaining test limits.
+## Run the console application
+
+From `src`, run `make app` and then `./out/hms [database-path] [schema-path]`. Defaults are `hms.db` and `schema.sql`. On first run, the application creates the initial Admin account with a salted PBKDF2 password hash. Password entry is masked in an interactive terminal. The role-specific menus expose patient registration/search, appointment booking/schedule, clinical visit and prescription history, and Admin staff/doctor/backup/report workflows. Existing API and acceptance gaps remain listed in the traceability matrix.
+
+The console uses `console.c` for terminal interaction, `app_service.c` for authenticated workflow entry points, and the existing modules and `db.c` for business operations and persistence. See [the test execution report](docs/TEST_EXECUTION_REPORT.md) for CI results, the first-run smoke walkthrough, performance measurements, and remaining limits.
