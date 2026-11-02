@@ -9,8 +9,9 @@ The repository contains no authoritative earlier sprint allocations or sprint co
 - Sprint 1: committed and pushed as `1cedd6b7655ef6ed44b33829ee808b2675706036` on `feat/sprint-1-core`.
 - Sprint 2: committed and pushed as `3b5567fe01b91c7cbedc44f9c49be0ff278c2975` on `feat/sprint-1-core`.
 - Sprint 3: committed and pushed as `37e82a3cec976d71b5d3c70814b72046532d3074` on `feat/sprint-1-core`.
-- Sprint 4: implementation and verification complete; dedicated commit and push are next.
-- Sprints 5–7: not started. Each receives a separate implementation or completion-evidence commit and push after its full suite passes.
+- Sprint 4: committed and pushed as `9ca05f1ee4ff8c7801a0f55b1afb70c69e0464c5` on `feat/sprint-1-core`.
+- Sprint 5: implementation and verification complete; dedicated commit and push are next.
+- Sprints 6–7: not started. Each receives a separate implementation or completion-evidence commit and push after its full suite passes.
 - The prescription mapping is HMS-F-040 recording, HMS-F-041 retrieval, AC-041 chronological order, and TC-Rx-02 retrieval test.
 
 ## Sprint 1 — Foundation
@@ -43,13 +44,13 @@ The repository contains no authoritative earlier sprint allocations or sprint co
 
 **Delivered:** The fixture asserts 10,000 patients and 10,000 appointments. A monotonic wall-clock benchmark performs 50 lookups each by patient ID, name, phone, appointment ID, and doctor/date. SQLite query-plan tests confirm the schedule lookup uses `idx_appt_doc_date`; patient exact-ID/phone branches can use existing indexes, while substring names remain scans. The latest normal run measured 111.81, 135.24, 126.01, 86.40, and 72.03 ms per 50 queries; the sanitizer pipeline measured 149.40, 109.10, 93.11, 42.42, and 41.37 ms, respectively. All are under two seconds. See `SPRINT_4_COMPLETION_REPORT.md`.
 
-## Sprint 5 — Transactional reliability
+## Sprint 5 — Transactional reliability (implemented; awaiting dedicated commit/push)
 
 **Requirements:** HMS-NF-004, AC-NF-004, TC-Rel-01.
 
 **Existing work to reuse:** Checked transactions and audit-failure rollback tests for key writes.
 
-**Remaining work:** Use a child process and disposable databases to interrupt writes at controlled points, reopen and integrity-check the DB, and demonstrate committed records survive while incomplete writes are absent. Never use the operational/project database for destructive tests.
+**Delivered:** `db_open` now requires WAL and FULL synchronous mode, checks PRAGMA failures, and rejects invalid/repeated opens without leaking the previous handle. The isolated `test_reliability` child commits a patient, begins a second insert, and exits without closing SQLite. Recovery verifies the earlier and child-committed rows remain, the incomplete row is absent, and integrity passes. See `SPRINT_5_COMPLETION_REPORT.md`. The process harness is POSIX-only; Windows reports it as skipped, not passed.
 
 ## Sprint 6 — Modular architecture and application workflows
 

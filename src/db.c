@@ -25,10 +25,20 @@ static int commit_write(void) {
 }
 
 int db_open(const char *path) {
-    if (sqlite3_open(path, &g_db) != SQLITE_OK) return -1;
-    sqlite3_exec(g_db, "PRAGMA foreign_keys=ON;", 0, 0, 0);
-    sqlite3_exec(g_db, "PRAGMA journal_mode=WAL;", 0, 0, 0);
+    if (!path || !*path || g_db) return -1;
+    if (sqlite3_open(path, &g_db) != SQLITE_OK) {
+        if (g_db) sqlite3_close(g_db);
+        g_db = NULL;
+        return -1;
+    }
     sqlite3_busy_timeout(g_db, 3000);
+    if (sqlite3_exec(g_db, "PRAGMA foreign_keys=ON;", NULL, NULL, NULL) != SQLITE_OK ||
+        sqlite3_exec(g_db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL) != SQLITE_OK ||
+        sqlite3_exec(g_db, "PRAGMA synchronous=FULL;", NULL, NULL, NULL) != SQLITE_OK) {
+        sqlite3_close(g_db);
+        g_db = NULL;
+        return -1;
+    }
     return 0;
 }
 

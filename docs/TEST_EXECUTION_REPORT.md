@@ -56,3 +56,7 @@ On 2026-11-02, after Admin-only backup/restore, exclusive destination creation, 
 ## Sprint 4 final verification
 
 The final Sprint 4 full Ubuntu 24.04 Docker make ci run exited **0**. All eight executables passed in both the standard and ASan/UBSan runs; no compiler warnings or sanitizer findings were reported. The performance fixture asserted exactly 10,000 patients and appointments and ran 50 repetitions for each of five lookup types. Standard and sanitizer timings are recorded in SPRINT_4_COMPLETION_REPORT.md; every 50-lookup aggregate was below 2 seconds. git diff --check passed.
+
+## Sprint 5 final verification
+
+The Ubuntu 24.04 Docker make ci run exited **0** with nine test executables. All nine passed in both standard and ASan/UBSan runs. test_reliability verifies WAL/FULL setup, child-process exit during an open transaction, survival of committed rows, rollback of the interrupted row, and post-recovery integrity. Its POSIX harness ran on Ubuntu; the Windows branch is an explicit skip and is not counted as a pass. No sanitizer findings or compiler warnings were reported.

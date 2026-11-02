@@ -87,7 +87,7 @@ The baseline schema contained a second `CREATE TABLE IF NOT EXISTS doctors` decl
 
 ## Test coverage in the checkout
 
-There are eight test programs: the original six plus `test_auth.c` and `test_core.c`. New assertions cover schema shape and existing-record preservation, Admin-only account creation, salted hashes and legacy-account migration, role spoof rejection, chronological history, backup validation/restore opening, and audit-failure rollback. `test_patient.c` bulk-seeds 10,000 fixtures in a single test transaction, then measures two patient lookups. `test_db.c` remains a print-based smoke program; `test_db2.c` now also asserts persisted-role enforcement. Crash durability, audit tamper prevention, full input fuzzing, Linux/Windows parity, and TCP are still untested.
+There are eight test programs: the original six plus `test_auth.c` and `test_core.c`. New assertions cover schema shape and existing-record preservation, Admin-only account creation, salted hashes and legacy-account migration, role spoof rejection, chronological history, backup validation/restore opening, and audit-failure rollback. `test_patient.c` bulk-seeds 10,000 fixtures in a single test transaction, then measures two patient lookups. `test_db.c` remains a print-based smoke program; `test_db2.c` now also asserts persisted-role enforcement. Sprint 5 added isolated Linux WAL interruption/recovery evidence. Audit tamper prevention, full input fuzzing, Linux/Windows parity, and optional TCP remain untested.
 
 The Makefile offers `make compile`, `make test`, and `make ci` (`compile`, `test`, then ASan/UBSan rebuild and test). GitHub Actions installs SQLite and OpenSSL development headers on Ubuntu before `make ci`. Sprint 1 ran `make test CC=gcc` successfully in MSYS2 UCRT64 and ran the complete `make ci` successfully in Ubuntu 24.04; exact commands and results are recorded in `docs/TEST_EXECUTION_REPORT.md`.
 
@@ -127,7 +127,7 @@ Commits mention “sprint” deliverables, but no sprint number, sprint goal, or
 4. Resolved: HMS-F-041 prescription retrieval is oldest-to-newest, with tests for dates, fields, and no-history behavior.
 5. Backup step/finalization and integrity are now checked; a test opens the copied database and compares schema/data. No user-facing restore workflow exists.
 6. Required patient/appointment/prescription audit writes now roll back their data changes on audit failure and use create/update/delete actions. No mechanism prevents audit-log modification; prescription update/delete APIs are absent.
-7. Patient, appointment, prescription, account-create, and backup transactions now check completion; other write paths still need review.
+7. Patient, appointment, prescription, account-create, and backup transactions check completion; Sprint 5 verifies committed/incomplete WAL recovery in a child-process test. Other write paths still need review.
 8. Some older smoke tests still do not check `db_init_schema` results; the new core/auth tests do.
 9. Platform support is unproven: the checked-in CI only targets Ubuntu, while shell recipes and POSIX sanitizer options in the Makefile are not directly portable to native Windows make.
 10. Resolved in Sprint 4: the test seeds 10,000 patients and 10,000 appointments, then measures 50 repeats for patient ID/name/phone, appointment ID, and doctor/date lookup using monotonic time. Target-hardware performance still needs validation.
