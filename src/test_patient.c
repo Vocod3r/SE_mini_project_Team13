@@ -12,8 +12,10 @@ int main(void) {
     db_open("t_patient.db");
     db_init_schema("schema.sql");
 
+    int admin_id = db_create_staff(0, "Admin", "admin", "testhash", "testsalt", "Admin");
+    int receptionist_id = db_create_staff(admin_id, "Admin", "reception", "testhash", "testsalt", "Receptionist");
     int doc = db_add_doctor(1, "Admin", "Dr. Mehta", "General", 500.0);
-    int p = db_add_patient(1, "Receptionist", "Asha Rao", 30, "F", "9876543210", "Chennai", "O+");
+    int p = db_add_patient(receptionist_id, "Receptionist", "Asha Rao", 30, "F", "9876543210", "Chennai", "O+");
 
     printf("--- HMS-F-011 patient_search ---\n");
     CHECK("search by name",  patient_search("Asha") == 1);
@@ -23,12 +25,37 @@ int main(void) {
     CHECK("% is literal, not wildcard", patient_search("%") == 0);
     CHECK("_ is literal, not wildcard", patient_search("_") == 0);
 
-    for (int i = 0; i < 10000; i++) {
+    /* Seed performance fixtures in one isolated transaction. The timed
+     * measurement is for lookups, not 10,000 individual audited writes. */
+    sqlite3 *seed_db = NULL;
+    sqlite3_stmt *seed = NULL;
+    int seed_ok = sqlite3_open("t_patient.db", &seed_db) == SQLITE_OK &&
+                  sqlite3_exec(seed_db, "BEGIN;", NULL, NULL, NULL) == SQLITE_OK &&
+                  sqlite3_prepare_v2(seed_db,
+                      "INSERT INTO patients(name,age,gender,phone,address,blood_group) "
+                      "VALUES(?1,40,'M',?2,'X','A+');", -1, &seed, NULL) == SQLITE_OK;
+    for (int i = 0; seed_ok && i < 9999; i++) {
         char nm[32], ph[16];
         snprintf(nm, sizeof nm, "Bulk%d", i);
         snprintf(ph, sizeof ph, "8%09d", i);
-        db_add_patient(1, "Receptionist", nm, 40, "M", ph, "X", "A+");
+        sqlite3_bind_text(seed, 1, nm, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(seed, 2, ph, -1, SQLITE_TRANSIENT);
+        seed_ok = sqlite3_step(seed) == SQLITE_DONE;
+        sqlite3_reset(seed);
+        sqlite3_clear_bindings(seed);
     }
+    sqlite3_finalize(seed);
+    if (seed_ok) seed_ok = sqlite3_exec(seed_db, "COMMIT;", NULL, NULL, NULL) == SQLITE_OK;
+    else sqlite3_exec(seed_db, "ROLLBACK;", NULL, NULL, NULL);
+    sqlite3_stmt *count_stmt = NULL;
+    int patient_count = -1;
+    if (seed_ok && sqlite3_prepare_v2(seed_db, "SELECT count(*) FROM patients;", -1,
+                                      &count_stmt, NULL) == SQLITE_OK &&
+        sqlite3_step(count_stmt) == SQLITE_ROW)
+        patient_count = sqlite3_column_int(count_stmt, 0);
+    sqlite3_finalize(count_stmt);
+    if (seed_db) sqlite3_close(seed_db);
+    CHECK("seed exactly 10,000 patient records", seed_ok && patient_count == 10000);
     clock_t t0 = clock();
     int a = patient_search("8000005000");
     int b = patient_search("Bulk7777");
@@ -41,9 +68,10 @@ int main(void) {
     CHECK("admin archives",    patient_archive(1, "Admin", p) == 0);
     CHECK("hidden from search", patient_search("Asha") == 0);
     CHECK("hidden from booking",
-          db_book_appointment(1, p, doc, "2026-11-05", "10:00") == -1);
+          db_book_appointment(receptionist_id, p, doc, "2026-11-05", "10:00") == -1);
 
     db_close();
+    remove("t_patient.db"); remove("t_patient.db-wal"); remove("t_patient.db-shm");
     printf(fails ? "RESULT: %d FAILED\n" : "RESULT: ALL PASSED\n", fails);
     return fails ? 1 : 0;
 }

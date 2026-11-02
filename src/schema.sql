@@ -80,14 +80,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
   record_id INTEGER,
   ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE IF NOT EXISTS doctors (
-    doctor_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    specialization TEXT NOT NULL,
-    working_hours TEXT NOT NULL,
-    is_active INTEGER DEFAULT 1
-);
-
+-- Legacy authentication table retained so db_init_schema can migrate its
+-- existing records into the canonical staff table without deleting them.
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,

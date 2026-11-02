@@ -1,6 +1,7 @@
 #ifndef DB_H
 #define DB_H
 #include "sqlite3.h"
+#include <stddef.h>
 
 /* Return values: id or 0 on success, -1 error, -2 conflict, -3 not permitted */
 
@@ -13,6 +14,14 @@ typedef struct {
     int  failed_attempts;
     long long locked_until;
 } Staff;
+
+typedef struct {
+    int rx_id;
+    char visit_date[16];
+    char medicines[256];
+    char dosage[256];
+    char notes[512];
+} PrescriptionRecord;
 
 int  db_open(const char *path);
 void db_close(void);
@@ -67,4 +76,6 @@ int  db_daily_report(const char *date);
 int  db_backup(const char *dest_path);
 int  db_health_check(void);
 int  db_get_prescriptions(int patient_id);
+int  db_get_prescription_records(int patient_id, PrescriptionRecord *records,
+                                 size_t capacity);
 #endif
