@@ -23,6 +23,24 @@ typedef struct {
     char notes[512];
 } PrescriptionRecord;
 
+typedef struct {
+    int patient_id;
+    char name[128];
+    int age;
+    char phone[32];
+} PatientRecord;
+
+typedef struct {
+    int appt_id;
+    int patient_id;
+    int doctor_id;
+    char patient_name[128];
+    char doctor_name[128];
+    char appt_date[16];
+    char time_slot[64];
+    char status[24];
+} AppointmentRecord;
+
 int  db_open(const char *path);
 void db_close(void);
 int  db_init_schema(const char *schema_path);
@@ -50,6 +68,8 @@ int  db_add_patient(int user_id, const char *role, const char *name, int age,
 int  db_update_patient(int user_id, const char *role, int patient_id, const char *name,
                        int age, const char *phone, const char *addr);
 int  db_search_patient(const char *query);
+int  db_find_patients(int user_id, const char *role, const char *query,
+                      PatientRecord *records, size_t capacity);
 int  db_archive_patient(int user_id, const char *role, int patient_id);
 
 /* Appointments (F-020 to F-023, F-032) */
@@ -58,6 +78,11 @@ int  db_book_appointment(int user_id, int patient_id, int doctor_id,
 int  db_reschedule_appointment(int user_id, int appt_id, const char *new_date, const char *new_slot);
 int  db_cancel_appointment(int user_id, int appt_id);
 int  db_get_schedule(int doctor_id, const char *date);
+int  db_get_appointment_by_id(int user_id, const char *role, int appt_id,
+                              AppointmentRecord *record);
+int  db_get_appointments_for_day(int user_id, const char *role, int doctor_id,
+                                 const char *date, AppointmentRecord *records,
+                                 size_t capacity);
 int  db_get_schedule_week(int doctor_id, const char *start_date);  /* F-023: 7 days, -1 bad date */
 int  db_print_appt_slip(int appt_id);                              /* F-024: 0 ok, -1 not found, -2 not active */
 int  db_queue_count(int doctor_id, const char *date);

@@ -102,6 +102,23 @@ static int actor_role_is(int user_id, const char *claimed_role,
     return allowed;
 }
 
+static int actor_is_staff(int user_id, const char *claimed_role) {
+    sqlite3_stmt *st = NULL;
+    int allowed = 0;
+    if (!g_db || user_id <= 0 || !claimed_role ||
+        sqlite3_prepare_v2(g_db, "SELECT role FROM staff WHERE staff_id=?;", -1,
+                           &st, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_int(st, 1, user_id);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        const char *actual = (const char *)sqlite3_column_text(st, 0);
+        allowed = actual && strcmp(actual, claimed_role) == 0 &&
+                  (!strcmp(actual, "Admin") || !strcmp(actual, "Doctor") ||
+                   !strcmp(actual, "Receptionist"));
+    }
+    sqlite3_finalize(st);
+    return allowed;
+}
+
 /* F-030 */
 int db_add_doctor(int user_id, const char *role, const char *name,
                   const char *spec, double fee) {
@@ -190,6 +207,43 @@ int db_search_patient(const char *q) {
     return count;
 }
 
+/* Structured, quiet patient lookup for UI callers and performance tests. */
+int db_find_patients(int user_id, const char *role, const char *q,
+                     PatientRecord *records, size_t capacity) {
+    if (!actor_is_staff(user_id, role)) return -3;
+    if (!g_db || !q || !*q || strlen(q) > 100 || !records || capacity == 0) return -1;
+    char escaped[256];
+    size_t used = 0;
+    for (size_t i = 0; q[i] && used < sizeof escaped - 2; ++i) {
+        if (q[i] == '%' || q[i] == '_' || q[i] == '\\') escaped[used++] = '\\';
+        escaped[used++] = q[i];
+    }
+    escaped[used] = '\0';
+    sqlite3_stmt *st = NULL;
+    const char *sql =
+        "SELECT patient_id,name,age,phone FROM patients WHERE is_archived=0 AND patient_id=CAST(?1 AS INTEGER) "
+        "UNION SELECT patient_id,name,age,phone FROM patients WHERE is_archived=0 AND phone=?1 "
+        "UNION SELECT patient_id,name,age,phone FROM patients WHERE is_archived=0 "
+        "AND name LIKE '%'||?2||'%' ESCAPE '\\';";
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_text(st, 1, q, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, escaped, -1, SQLITE_TRANSIENT);
+    size_t count = 0;
+    int rc;
+    while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
+        if (count >= capacity) { sqlite3_finalize(st); return -1; }
+        PatientRecord *record = &records[count++];
+        record->patient_id = sqlite3_column_int(st, 0);
+        snprintf(record->name, sizeof record->name, "%s",
+                 (const char *)sqlite3_column_text(st, 1));
+        record->age = sqlite3_column_int(st, 2);
+        snprintf(record->phone, sizeof record->phone, "%s",
+                 (const char *)sqlite3_column_text(st, 3));
+    }
+    sqlite3_finalize(st);
+    return rc == SQLITE_DONE ? (int)count : -1;
+}
+
 /* F-014: soft delete */
 int db_archive_patient(int user_id, const char *role, int pid) {
     if (!actor_role_is(user_id, role, "Admin", NULL)) return -3;
@@ -276,6 +330,81 @@ int db_get_schedule(int did, const char *date) {
     }
     sqlite3_finalize(st);
     return n;
+}
+
+/* Structured appointment lookup by primary key; no console output in the
+ * timed path, and access is limited to an authenticated persisted staff row. */
+int db_get_appointment_by_id(int user_id, const char *role, int appt_id,
+                             AppointmentRecord *record) {
+    if (!actor_is_staff(user_id, role)) return -3;
+    if (!g_db || appt_id <= 0 || !record) return -1;
+    sqlite3_stmt *st = NULL;
+    const char *sql =
+        "SELECT a.appt_id,a.patient_id,a.doctor_id,p.name,d.name,a.appt_date,"
+        "a.time_slot,a.status FROM appointments a "
+        "JOIN patients p ON p.patient_id=a.patient_id "
+        "JOIN doctors d ON d.doctor_id=a.doctor_id WHERE a.appt_id=?;";
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_int(st, 1, appt_id);
+    int result = -1;
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        record->appt_id = sqlite3_column_int(st, 0);
+        record->patient_id = sqlite3_column_int(st, 1);
+        record->doctor_id = sqlite3_column_int(st, 2);
+        snprintf(record->patient_name, sizeof record->patient_name, "%s",
+                 (const char *)sqlite3_column_text(st, 3));
+        snprintf(record->doctor_name, sizeof record->doctor_name, "%s",
+                 (const char *)sqlite3_column_text(st, 4));
+        snprintf(record->appt_date, sizeof record->appt_date, "%s",
+                 (const char *)sqlite3_column_text(st, 5));
+        snprintf(record->time_slot, sizeof record->time_slot, "%s",
+                 (const char *)sqlite3_column_text(st, 6));
+        snprintf(record->status, sizeof record->status, "%s",
+                 (const char *)sqlite3_column_text(st, 7));
+        result = 0;
+    }
+    sqlite3_finalize(st);
+    return result;
+}
+
+/* Indexed schedule lookup exposed as structured rows for callers that need
+ * the result data rather than a console rendering. */
+int db_get_appointments_for_day(int user_id, const char *role, int doctor_id,
+                                const char *date, AppointmentRecord *records,
+                                size_t capacity) {
+    if (!actor_is_staff(user_id, role)) return -3;
+    if (!g_db || doctor_id <= 0 || !date || !*date || !records || capacity == 0) return -1;
+    sqlite3_stmt *st = NULL;
+    const char *sql =
+        "SELECT a.appt_id,a.patient_id,a.doctor_id,p.name,d.name,a.appt_date,"
+        "a.time_slot,a.status FROM appointments a "
+        "JOIN patients p ON p.patient_id=a.patient_id "
+        "JOIN doctors d ON d.doctor_id=a.doctor_id "
+        "WHERE a.doctor_id=? AND a.appt_date=? ORDER BY a.time_slot,a.appt_id;";
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, NULL) != SQLITE_OK) return -1;
+    sqlite3_bind_int(st, 1, doctor_id);
+    sqlite3_bind_text(st, 2, date, -1, SQLITE_TRANSIENT);
+    size_t count = 0;
+    int rc;
+    while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
+        if (count >= capacity) { sqlite3_finalize(st); return -1; }
+        AppointmentRecord *record = &records[count++];
+        record->appt_id = sqlite3_column_int(st, 0);
+        record->patient_id = sqlite3_column_int(st, 1);
+        record->doctor_id = sqlite3_column_int(st, 2);
+        snprintf(record->patient_name, sizeof record->patient_name, "%s",
+                 (const char *)sqlite3_column_text(st, 3));
+        snprintf(record->doctor_name, sizeof record->doctor_name, "%s",
+                 (const char *)sqlite3_column_text(st, 4));
+        snprintf(record->appt_date, sizeof record->appt_date, "%s",
+                 (const char *)sqlite3_column_text(st, 5));
+        snprintf(record->time_slot, sizeof record->time_slot, "%s",
+                 (const char *)sqlite3_column_text(st, 6));
+        snprintf(record->status, sizeof record->status, "%s",
+                 (const char *)sqlite3_column_text(st, 7));
+    }
+    sqlite3_finalize(st);
+    return rc == SQLITE_DONE ? (int)count : -1;
 }
 
 /* F-023 (weekly view): 7 days starting at start_date. Returns row count, -1 error / bad date. */

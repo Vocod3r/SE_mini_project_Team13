@@ -36,6 +36,19 @@ static int integrity_ok(sqlite3 *db) {
     return scalar_text_is(db, "PRAGMA integrity_check;", "ok");
 }
 
+static int query_plan_uses(sqlite3 *db, const char *sql, const char *index_name) {
+    sqlite3_stmt *st = NULL;
+    int found = 0;
+    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) == SQLITE_OK) {
+        while (sqlite3_step(st) == SQLITE_ROW) {
+            const unsigned char *detail = sqlite3_column_text(st, 3);
+            if (detail && strstr((const char *)detail, index_name)) found = 1;
+        }
+    }
+    sqlite3_finalize(st);
+    return found;
+}
+
 static int file_exists(const char *path) {
     FILE *file = fopen(path, "rb");
     if (!file) return 0;
@@ -103,6 +116,26 @@ int main(void) {
     sqlite3_exec(direct, "DROP TRIGGER reject_patient_audit;", NULL, NULL, NULL);
 
     int appt = db_book_appointment(receptionist_id, pid, did, "2026-11-10", "10:00");
+    AppointmentRecord appointment_record;
+    CHECK("appointment lookup returns the persisted row",
+          appt > 0 && db_get_appointment_by_id(receptionist_id, "Receptionist", appt,
+                                               &appointment_record) == 0 &&
+          appointment_record.appt_id == appt && appointment_record.patient_id == pid &&
+          strcmp(appointment_record.patient_name, "Asha R") == 0 &&
+          strcmp(appointment_record.appt_date, "2026-11-10") == 0);
+    CHECK("appointment lookup rejects forged role and unknown ID",
+          db_get_appointment_by_id(receptionist_id, "Admin", appt, &appointment_record) == -3 &&
+          db_get_appointment_by_id(receptionist_id, "Receptionist", 999999, &appointment_record) == -1);
+    AppointmentRecord day_records[2];
+    CHECK("indexed appointment schedule lookup returns structured rows",
+          db_get_appointments_for_day(receptionist_id, "Receptionist", did,
+                                      "2026-11-10", day_records, 2) == 1 &&
+          day_records[0].appt_id == appt && day_records[0].doctor_id == did);
+    CHECK("appointment schedule query uses its doctor/date index",
+          query_plan_uses(direct,
+              "EXPLAIN QUERY PLAN SELECT appt_id FROM appointments "
+              "WHERE doctor_id=1 AND appt_date='2026-11-10' ORDER BY time_slot;",
+              "idx_appt_doc_date"));
     CHECK("appointment create records audit", appt > 0 &&
           scalar_int(direct, "SELECT count(*) FROM audit_log WHERE table_name='appointments' AND action='CREATE'") == 1);
     CHECK("appointment audit failure rolls back booking", sqlite3_exec(direct,

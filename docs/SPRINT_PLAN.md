@@ -8,8 +8,9 @@ The repository contains no authoritative earlier sprint allocations or sprint co
 
 - Sprint 1: committed and pushed as `1cedd6b7655ef6ed44b33829ee808b2675706036` on `feat/sprint-1-core`.
 - Sprint 2: committed and pushed as `3b5567fe01b91c7cbedc44f9c49be0ff278c2975` on `feat/sprint-1-core`.
-- Sprint 3: implementation and verification complete; dedicated commit and push are next.
-- Sprints 4–7: not started. Each receives a separate implementation or completion-evidence commit and push after its full suite passes.
+- Sprint 3: committed and pushed as `37e82a3cec976d71b5d3c70814b72046532d3074` on `feat/sprint-1-core`.
+- Sprint 4: implementation and verification complete; dedicated commit and push are next.
+- Sprints 5–7: not started. Each receives a separate implementation or completion-evidence commit and push after its full suite passes.
 - The prescription mapping is HMS-F-040 recording, HMS-F-041 retrieval, AC-041 chronological order, and TC-Rx-02 retrieval test.
 
 ## Sprint 1 — Foundation
@@ -34,13 +35,13 @@ The repository contains no authoritative earlier sprint allocations or sprint co
 
 **Delivered:** The backup and restore APIs verify the persisted Admin role, require a new destination file, validate backup integrity, preserve schema/data, and clean up failed outputs. Restoration copies into a separate database without overwriting an existing database. Tests cover unauthorized access, invalid source, missing directories, integrity, contents, and no-overwrite behavior. Admin menu integration remains in Sprint 6. See `SPRINT_3_COMPLETION_REPORT.md`.
 
-## Sprint 4 — Performance
+## Sprint 4 — Performance (implemented; awaiting dedicated commit/push)
 
 **Requirements:** HMS-NF-001, AC-NF-001, TC-Perf-01.
 
 **Existing work to reuse:** Sprint 1 seeded and asserted exactly 10,000 patients and measured phone/name searches under two seconds.
 
-**Remaining work:** Add a timed appointment lookup query against a fixture with 10,000 patients and appointments; measure the specified ID/name/phone and appointment lookups repeatedly, report actual individual and aggregate timings, and add indexes only when query plans/evidence support them.
+**Delivered:** The fixture asserts 10,000 patients and 10,000 appointments. A monotonic wall-clock benchmark performs 50 lookups each by patient ID, name, phone, appointment ID, and doctor/date. SQLite query-plan tests confirm the schedule lookup uses `idx_appt_doc_date`; patient exact-ID/phone branches can use existing indexes, while substring names remain scans. The latest normal run measured 111.81, 135.24, 126.01, 86.40, and 72.03 ms per 50 queries; the sanitizer pipeline measured 149.40, 109.10, 93.11, 42.42, and 41.37 ms, respectively. All are under two seconds. See `SPRINT_4_COMPLETION_REPORT.md`.
 
 ## Sprint 5 — Transactional reliability
 

@@ -130,7 +130,7 @@ Commits mention “sprint” deliverables, but no sprint number, sprint goal, or
 7. Patient, appointment, prescription, account-create, and backup transactions now check completion; other write paths still need review.
 8. Some older smoke tests still do not check `db_init_schema` results; the new core/auth tests do.
 9. Platform support is unproven: the checked-in CI only targets Ubuntu, while shell recipes and POSIX sanitizer options in the Makefile are not directly portable to native Windows make.
-10. The 10,000-record test covers two patient searches only; it does not measure appointment lookups, repeat runs, or control timing noise.
+10. Resolved in Sprint 4: the test seeds 10,000 patients and 10,000 appointments, then measures 50 repeats for patient ID/name/phone, appointment ID, and doctor/date lookup using monotonic time. Target-hardware performance still needs validation.
 
 ## Sprint 1 update
 

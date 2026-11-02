@@ -52,3 +52,7 @@ On 2026-11-02, after the prescription-history authorization and long-history tes
 ## Sprint 3 final verification
 
 On 2026-11-02, after Admin-only backup/restore, exclusive destination creation, and restoration tests were added, the Ubuntu 24.04 Docker make ci pipeline exited **0**. All eight test executables passed in both standard and ASan/UBSan runs. TC-Rep-02 checks backup/restore integrity and content preservation, persisted Admin authorization, invalid/missing sources and paths, and refusal to overwrite existing destinations. A corrupt source is rejected before restore output is created.
+
+## Sprint 4 final verification
+
+The final Sprint 4 full Ubuntu 24.04 Docker make ci run exited **0**. All eight executables passed in both the standard and ASan/UBSan runs; no compiler warnings or sanitizer findings were reported. The performance fixture asserted exactly 10,000 patients and appointments and ran 50 repetitions for each of five lookup types. Standard and sanitizer timings are recorded in SPRINT_4_COMPLETION_REPORT.md; every 50-lookup aggregate was below 2 seconds. git diff --check passed.
