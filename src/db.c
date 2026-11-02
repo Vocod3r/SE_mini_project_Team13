@@ -776,35 +776,28 @@ int db_daily_report(const char *date) {
     return n;
 
 }
-/* F-041: prescriptions in chronological visit-date order. */
-int db_get_prescriptions(int pid) {
-    sqlite3_stmt *st;
-    const char *sql =
-        "SELECT v.visit_date,r.medicines,r.dosage,r.notes FROM prescriptions r "
-        "JOIN visits v ON v.visit_id=r.visit_id "
-        "WHERE r.patient_id=? ORDER BY v.visit_date ASC, r.rx_id ASC;";
-    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) return -1;
-    sqlite3_bind_int(st, 1, pid);
-    int n = 0;
-    while (sqlite3_step(st) == SQLITE_ROW) {
-        printf("%s | %s | %s | %s\n", sqlite3_column_text(st, 0), sqlite3_column_text(st, 1),
-               sqlite3_column_text(st, 2), sqlite3_column_text(st, 3));
-        n++;
+/* F-041: count/fetch every prescription in chronological visit-date order. */
+int db_get_prescription_records(int user_id, const char *role, int pid,
+                                PrescriptionRecord *records, size_t capacity) {
+    sqlite3_stmt *st = NULL;
+    int total = 0;
+    if (!g_db || pid <= 0 || (!records && capacity) ||
+        !actor_role_is(user_id, role, "Doctor", "Admin")) return -3;
+    if (!records && capacity == 0) {
+        if (sqlite3_prepare_v2(g_db,
+            "SELECT count(*) FROM prescriptions WHERE patient_id=?;", -1,
+            &st, NULL) != SQLITE_OK) return -1;
+        sqlite3_bind_int(st, 1, pid);
+        if (sqlite3_step(st) == SQLITE_ROW) total = sqlite3_column_int(st, 0);
+        else total = -1;
+        sqlite3_finalize(st);
+        return total;
     }
-    sqlite3_finalize(st);
-    return n;
-}
-
-/* Structured form used by callers and acceptance tests that need to inspect
- * the returned fields without parsing console output. */
-int db_get_prescription_records(int pid, PrescriptionRecord *records, size_t capacity) {
-    sqlite3_stmt *st;
     const char *sql =
         "SELECT r.rx_id,v.visit_date,r.medicines,r.dosage,r.notes "
         "FROM prescriptions r JOIN visits v ON v.visit_id=r.visit_id "
         "WHERE r.patient_id=? ORDER BY v.visit_date ASC,r.rx_id ASC;";
-    if (!g_db || pid <= 0 || (!records && capacity) ||
-        sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) return -1;
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) return -1;
     sqlite3_bind_int(st, 1, pid);
     size_t count = 0;
     int rc;
@@ -824,4 +817,21 @@ int db_get_prescription_records(int pid, PrescriptionRecord *records, size_t cap
     }
     sqlite3_finalize(st);
     return rc == SQLITE_DONE ? (int)count : -1;
+}
+
+/* Console-ready history display used by the consultation workflow. The count
+ * query lets this return every row without a fixed history limit. */
+int db_get_prescriptions(int user_id, const char *role, int pid) {
+    int count = db_get_prescription_records(user_id, role, pid, NULL, 0);
+    if (count <= 0) return count;
+    PrescriptionRecord *records = calloc((size_t)count, sizeof *records);
+    if (!records) return -1;
+    int fetched = db_get_prescription_records(user_id, role, pid, records, (size_t)count);
+    if (fetched >= 0) {
+        for (int i = 0; i < fetched; ++i)
+            printf("%s | %s | %s | %s\n", records[i].visit_date,
+                   records[i].medicines, records[i].dosage, records[i].notes);
+    }
+    free(records);
+    return fetched;
 }

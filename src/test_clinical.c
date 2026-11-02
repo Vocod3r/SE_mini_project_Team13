@@ -29,8 +29,10 @@ int main(void) {
     CHECK("receptionist refused", consult_history("Receptionist", p) == -3);
 
     printf("--- HMS-F-041 consult_prescriptions ---\n");
-    CHECK("2 prescriptions", consult_prescriptions("Doctor", p) == 2);
-    CHECK("receptionist refused", consult_prescriptions("Receptionist", p) == -3);
+    CHECK("2 prescriptions", consult_prescriptions(doctor_user_id, "Doctor", p) == 2);
+    CHECK("receptionist refused", consult_prescriptions(receptionist_id, "Receptionist", p) == -3);
+    CHECK("persisted receptionist role cannot be claimed as Doctor",
+          consult_prescriptions(receptionist_id, "Doctor", p) == -3);
 
     printf("--- e2e: register -> book -> consult -> bill -> pay ---\n");
     int bill = db_create_bill(receptionist_id, "Receptionist", v2);

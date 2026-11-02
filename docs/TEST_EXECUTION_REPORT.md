@@ -44,3 +44,7 @@ The final performance fixture asserted exactly 10,000 patient rows. In the stand
 - Performance evidence covers patient lookup only, not appointment lookup or repeated 50-iteration load.
 - Crash/power-loss recovery, cross-platform Windows/Linux parity, audit-log tamper prevention, full fuzzing, and a UI-driven authorization workflow remain unverified.
 - `test_db.c` remains a print-based smoke test; its exit code alone does not validate each printed expectation.
+
+## Sprint 2 final verification
+
+On 2026-11-02, after the prescription-history authorization and long-history tests were added, the same Ubuntu 24.04 Docker make ci pipeline exited **0**. All eight test executables passed in both the standard and ASan/UBSan passes. Added TC-Rx-02 checks cover persisted Doctor/Admin identity, forged-role rejection, invalid IDs, empty history, visit-date order, all available prescription detail fields, insufficient result capacity, and 66 prescription rows. The patient lookup timing from that later run is not reported here because Sprint 2 made no performance changes and the run was for regression validation.

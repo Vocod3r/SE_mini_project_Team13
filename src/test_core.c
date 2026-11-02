@@ -168,13 +168,54 @@ int main(void) {
     sqlite3_finalize(fixture);
     CHECK("insert dated history fixtures", fixture_ok);
     PrescriptionRecord records[2];
-    CHECK("HMS-F-041 returns all prescriptions chronologically",
-          db_get_prescription_records(pid, records, 2) == 2 &&
+    CHECK("HMS-F-041 count query returns the complete history",
+          db_get_prescription_records(doctor_user_id, "Doctor", pid, NULL, 0) == 2);
+    CHECK("HMS-F-041 requires enough capacity for the complete history",
+          db_get_prescription_records(doctor_user_id, "Doctor", pid, records, 1) == -1);
+    CHECK("HMS-F-041 returns all details chronologically",
+          db_get_prescription_records(doctor_user_id, "Doctor", pid, records, 2) == 2 &&
           strcmp(records[0].visit_date, "2026-11-01") == 0 &&
           strcmp(records[0].medicines, "Earlier medicine") == 0 &&
+          strcmp(records[0].dosage, "1/day") == 0 &&
+          strcmp(records[0].notes, "3 days") == 0 &&
           strcmp(records[1].visit_date, "2026-11-20") == 0 &&
           strcmp(records[1].medicines, "Later medicine") == 0);
-    CHECK("HMS-F-041 handles empty history", db_get_prescription_records(p2, records, 2) == 0);
+    CHECK("HMS-F-041 rejects forged Doctor role",
+          db_get_prescription_records(receptionist_id, "Doctor", pid, records, 2) == -3);
+    CHECK("HMS-F-041 handles empty history",
+          db_get_prescription_records(admin_id, "Admin", p2, records, 2) == 0);
+    CHECK("HMS-F-041 rejects invalid patient IDs",
+          db_get_prescription_records(doctor_user_id, "Doctor", 0, records, 2) == -3);
+    int bulk_history_ok = 1;
+    for (int i = 0; i < 64 && bulk_history_ok; ++i) {
+        sqlite3_stmt *bulk = NULL;
+        bulk_history_ok = sqlite3_prepare_v2(direct,
+            "INSERT INTO visits(appt_id,patient_id,diagnosis,visit_date) "
+            "VALUES(?,?,?,'2027-01-01');", -1, &bulk, NULL) == SQLITE_OK;
+        if (bulk_history_ok) {
+            sqlite3_bind_int(bulk, 1, appt1);
+            sqlite3_bind_int(bulk, 2, pid);
+            sqlite3_bind_text(bulk, 3, "long history", -1, SQLITE_STATIC);
+            bulk_history_ok = sqlite3_step(bulk) == SQLITE_DONE;
+        }
+        sqlite3_finalize(bulk);
+        if (!bulk_history_ok) break;
+        int visit = (int)sqlite3_last_insert_rowid(direct);
+        bulk_history_ok = sqlite3_prepare_v2(direct,
+            "INSERT INTO prescriptions(visit_id,patient_id,medicines,dosage,notes) "
+            "VALUES(?,?,'Medicine','1/day','1 day');", -1, &bulk, NULL) == SQLITE_OK;
+        if (bulk_history_ok) {
+            sqlite3_bind_int(bulk, 1, visit);
+            sqlite3_bind_int(bulk, 2, pid);
+            bulk_history_ok = sqlite3_step(bulk) == SQLITE_DONE;
+        }
+        sqlite3_finalize(bulk);
+    }
+    PrescriptionRecord long_history[66];
+    CHECK("HMS-F-041 loads histories beyond a small fixed result size",
+          bulk_history_ok &&
+          db_get_prescription_records(doctor_user_id, "Doctor", pid, NULL, 0) == 66 &&
+          db_get_prescription_records(doctor_user_id, "Doctor", pid, long_history, 66) == 66);
 
     CHECK("backup completes and validates", db_backup("t_core_backup.db") == 0);
     CHECK("open backup for restore validation", sqlite3_open("t_core_backup.db", &backup) == SQLITE_OK);

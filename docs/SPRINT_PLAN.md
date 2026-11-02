@@ -6,8 +6,9 @@ The repository contains no authoritative earlier sprint allocations or sprint co
 
 ## Status
 
-- Sprint 1: implementation complete and verified; dedicated commit and push are the next actions.
-- Sprints 2–7: not started. Each receives a separate implementation or completion-evidence commit and push after its full suite passes.
+- Sprint 1: committed and pushed as `1cedd6b7655ef6ed44b33829ee808b2675706036` on `feat/sprint-1-core`.
+- Sprint 2: implementation and verification complete; dedicated commit and push are next.
+- Sprints 3–7: not started. Each receives a separate implementation or completion-evidence commit and push after its full suite passes.
 - The prescription mapping is HMS-F-040 recording, HMS-F-041 retrieval, AC-041 chronological order, and TC-Rx-02 retrieval test.
 
 ## Sprint 1 — Foundation
@@ -16,13 +17,13 @@ The repository contains no authoritative earlier sprint allocations or sprint co
 
 **Evidence:** `SPRINT_1_COMPLETION_REPORT.md` and `TEST_EXECUTION_REPORT.md`. The latest CI pass covered eight executables in normal and ASan/UBSan modes. It measured phone/name patient search against exactly 10,000 rows; appointment lookup performance remains for Sprint 4.
 
-## Sprint 2 — Prescription history
+## Sprint 2 — Prescription history (implemented; awaiting dedicated commit/push)
 
 **Requirements:** HMS-F-041, AC-041, TC-Rx-02; also role-safe patient history access under HMS-F-013 and HMS-SR-002.
 
 **Existing work to reuse:** Sprint 1 added structured chronological prescription retrieval and tests for reversed dates and empty history. Do not duplicate that DAL functionality.
 
-**Remaining work:** Provide a usable Doctor/Admin workflow to search/select a patient and display all prescription history fields; enforce the logged-in identity and role at the access boundary; cover invalid IDs, empty history, long results, and authorization with automated tests.
+**Delivered:** Identity-based Doctor/Admin history retrieval checks the persisted staff role at the DAL, counts before allocating so all rows can be returned, and prints visit date, medicines, dosage, and notes chronologically. Tests cover invalid IDs, no history, forged role, field contents, capacity errors, and 66 prescriptions. The patient-selection/login menu remains in Sprint 6. See `SPRINT_2_COMPLETION_REPORT.md`.
 
 ## Sprint 3 — Patient database backup
 
