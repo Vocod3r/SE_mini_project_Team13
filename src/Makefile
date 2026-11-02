@@ -1,6 +1,6 @@
 CC      ?= gcc
 CFLAGS  ?= -std=c11 -g -Wall -Wextra -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE
-LDLIBS  := -lsqlite3
+LDLIBS  := -lsqlite3 -lcrypto
 
 LIB_SRC  := $(filter-out $(wildcard test_*.c) crash.c,$(wildcard *.c))
 TEST_SRC := $(wildcard test_*.c)
@@ -25,4 +25,4 @@ asan:
 	$(MAKE) test CFLAGS="$(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer"
 
 clean:
-	rm -rf out *.db *.db-wal *.db-shm
+	rm -rf out

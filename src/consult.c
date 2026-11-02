@@ -11,7 +11,7 @@ int consult_history(const char *role, int patient_id) {
     return db_get_patient_history(patient_id);
 }
 
-int consult_prescriptions(const char *role, int patient_id) {
+int consult_prescriptions(int user_id, const char *role, int patient_id) {
     if (!allowed(role)) return -3;
-    return db_get_prescriptions(patient_id);
+    return db_get_prescriptions(user_id, role, patient_id);
 }
