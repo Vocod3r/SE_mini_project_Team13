@@ -80,6 +80,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
   record_id INTEGER,
   ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TRIGGER IF NOT EXISTS audit_log_reject_update
+BEFORE UPDATE ON audit_log
+BEGIN
+  SELECT RAISE(ABORT, 'audit_log is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS audit_log_reject_delete
+BEFORE DELETE ON audit_log
+BEGIN
+  SELECT RAISE(ABORT, 'audit_log is append-only');
+END;
 -- Legacy authentication table retained so db_init_schema can migrate its
 -- existing records into the canonical staff table without deleting them.
 CREATE TABLE IF NOT EXISTS users (

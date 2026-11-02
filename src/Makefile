@@ -2,14 +2,19 @@ CC      ?= gcc
 CFLAGS  ?= -std=c11 -g -Wall -Wextra -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE
 LDLIBS  := -lsqlite3 -lcrypto
 
-LIB_SRC  := $(filter-out $(wildcard test_*.c) crash.c,$(wildcard *.c))
+LIB_SRC  := $(filter-out $(wildcard test_*.c) crash.c main.c,$(wildcard *.c))
 TEST_SRC := $(wildcard test_*.c)
 TEST_BIN := $(TEST_SRC:%.c=out/%)
+APP_BIN  := out/hms
 
-.PHONY: ci compile test asan clean
+.PHONY: ci compile test asan clean app
 ci: compile test asan        # run this before every push
 
-compile: $(TEST_BIN)
+compile: $(APP_BIN) $(TEST_BIN)
+app: $(APP_BIN)
+
+$(APP_BIN): main.c $(LIB_SRC) | out
+	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
 
 out/%: %.c $(LIB_SRC) | out
 	$(CC) $(CFLAGS) $< $(LIB_SRC) -o $@ $(LDLIBS)

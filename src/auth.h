@@ -14,6 +14,8 @@ typedef struct {
  * Returns 1 on success and 0 on rejection/error. */
 int create_staff_account(sqlite3 *db, int actor_id, const char *actor_role,
                          const char *username, const char *password, const char *role);
+/* Create the first Admin only when the canonical staff table is empty. */
+int create_initial_admin(sqlite3 *db, const char *username, const char *password);
 int authenticate_user(sqlite3 *db, const char *username, const char *password, User *out_user);
 
 #endif
