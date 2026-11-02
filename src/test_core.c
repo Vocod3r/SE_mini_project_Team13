@@ -36,6 +36,13 @@ static int integrity_ok(sqlite3 *db) {
     return scalar_text_is(db, "PRAGMA integrity_check;", "ok");
 }
 
+static int file_exists(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return 0;
+    fclose(file);
+    return 1;
+}
+
 static void remove_test_db(const char *path) {
     char aux[256];
     remove(path);
@@ -44,9 +51,13 @@ static void remove_test_db(const char *path) {
 }
 
 int main(void) {
-    sqlite3 *direct = NULL, *backup = NULL;
+    sqlite3 *direct = NULL, *backup = NULL, *restored = NULL;
     remove_test_db("t_core.db");
     remove_test_db("t_core_backup.db");
+    remove_test_db("t_core_restore.db");
+    remove_test_db("t_invalid_backup.db");
+    remove_test_db("t_invalid_restore.db");
+    remove_test_db("t_unauthorized_backup.db");
     CHECK("open isolated database", db_open("t_core.db") == 0);
     CHECK("initialize canonical schema", db_init_schema("schema.sql") == 0);
     int admin_id = db_create_staff(0, "Admin", "admin", "testhash", "testsalt", "Admin");
@@ -217,14 +228,42 @@ int main(void) {
           db_get_prescription_records(doctor_user_id, "Doctor", pid, NULL, 0) == 66 &&
           db_get_prescription_records(doctor_user_id, "Doctor", pid, long_history, 66) == 66);
 
-    CHECK("backup completes and validates", db_backup("t_core_backup.db") == 0);
+    CHECK("receptionist cannot create a backup",
+          db_backup(receptionist_id, "Receptionist", "t_unauthorized_backup.db") == -3 &&
+          !file_exists("t_unauthorized_backup.db"));
+    CHECK("Admin backup completes and validates",
+          db_backup(admin_id, "Admin", "t_core_backup.db") == 0);
+    CHECK("backup refuses to overwrite an existing file",
+          db_backup(admin_id, "Admin", "t_core_backup.db") == -1);
     CHECK("open backup for restore validation", sqlite3_open("t_core_backup.db", &backup) == SQLITE_OK);
     CHECK("backup preserves patients and schema",
           scalar_int(backup, "SELECT count(*) FROM patients") == 2 &&
           scalar_int(backup, "SELECT count(*) FROM pragma_table_info('doctors')") ==
           scalar_int(direct, "SELECT count(*) FROM pragma_table_info('doctors')"));
     CHECK("backup passes integrity check", integrity_ok(backup));
-    CHECK("backup to missing directory fails", db_backup("missing_backup_folder/t_core.db") == -1);
+    CHECK("backup to missing directory fails",
+          db_backup(admin_id, "Admin", "missing_backup_folder/t_core.db") == -1);
+    CHECK("restore rejects a forged Admin role",
+          db_restore_backup(receptionist_id, "Admin", "t_core_backup.db", "t_core_restore.db") == -3);
+    CHECK("Admin restores backup to a new database",
+          db_restore_backup(admin_id, "Admin", "t_core_backup.db", "t_core_restore.db") == 0 &&
+          sqlite3_open("t_core_restore.db", &restored) == SQLITE_OK);
+    CHECK("restored database contains original records and is valid",
+          restored && integrity_ok(restored) &&
+          scalar_int(restored, "SELECT count(*) FROM patients") == 2 &&
+          scalar_int(restored, "SELECT count(*) FROM prescriptions") == 66 &&
+          scalar_int(restored, "SELECT count(*) FROM pragma_table_info('doctors')") ==
+          scalar_int(direct, "SELECT count(*) FROM pragma_table_info('doctors')"));
+    CHECK("restore refuses to overwrite an existing database",
+          db_restore_backup(admin_id, "Admin", "t_core_backup.db", "t_core_restore.db") == -1 &&
+          scalar_int(restored, "SELECT count(*) FROM patients") == 2);
+    FILE *bad_backup = fopen("t_invalid_backup.db", "wb");
+    int bad_backup_written = bad_backup && fputs("not a sqlite database", bad_backup) >= 0;
+    if (bad_backup) fclose(bad_backup);
+    CHECK("invalid backup is rejected without creating restore output",
+          bad_backup_written &&
+          db_restore_backup(admin_id, "Admin", "t_invalid_backup.db", "t_invalid_restore.db") == -1 &&
+          !file_exists("t_invalid_restore.db"));
 
     char audit_sql[128];
     snprintf(audit_sql, sizeof audit_sql,
@@ -236,10 +275,15 @@ int main(void) {
           add_doctor(direct, "Dr. Removable", "General", "09:00-17:00") == 1 &&
           remove_doctor(direct, scalar_int(direct, "SELECT max(doctor_id) FROM doctors")) == 1);
     sqlite3_close(backup);
+    if (restored) sqlite3_close(restored);
     sqlite3_close(direct);
     db_close();
     remove_test_db("t_core.db");
     remove_test_db("t_core_backup.db");
+    remove_test_db("t_core_restore.db");
+    remove_test_db("t_invalid_backup.db");
+    remove_test_db("t_invalid_restore.db");
+    remove_test_db("t_unauthorized_backup.db");
     sqlite3 *old_db = NULL;
     remove_test_db("t_schema_legacy.db");
     CHECK("prepare existing-database preservation fixture",

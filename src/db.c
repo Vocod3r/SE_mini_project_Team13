@@ -344,39 +344,80 @@ int db_print_appt_slip(int appt_id) {
     return rc;
 }
 
-/* F-061 */
-int db_backup(const char *dest) {
-    sqlite3 *dst = NULL;
-    if (!g_db || !dest || !*dest || sqlite3_open(dest, &dst) != SQLITE_OK) {
-        if (dst) sqlite3_close(dst);
-        return -1;
+static int sqlite_integrity_ok(sqlite3 *db) {
+    sqlite3_stmt *check = NULL;
+    int ok = 0;
+    if (sqlite3_prepare_v2(db, "PRAGMA integrity_check;", -1, &check, NULL) == SQLITE_OK &&
+        sqlite3_step(check) == SQLITE_ROW) {
+        const unsigned char *integrity = sqlite3_column_text(check, 0);
+        ok = integrity && strcmp((const char *)integrity, "ok") == 0 &&
+             sqlite3_step(check) == SQLITE_DONE;
     }
-    sqlite3_backup *b = sqlite3_backup_init(dst, "main", g_db, "main");
-    if (!b) { sqlite3_close(dst); return -1; }
+    sqlite3_finalize(check);
+    return ok;
+}
+
+/* Creates a new placeholder exclusively. Existing files are never truncated. */
+static int create_empty_destination(const char *path) {
+    FILE *file = fopen(path, "wbx");
+    if (!file) return 0;
+    if (fclose(file) == 0) return 1;
+    remove(path);
+    return 0;
+}
+
+static int copy_database(sqlite3 *source, sqlite3 *dest) {
+    sqlite3_backup *backup = sqlite3_backup_init(dest, "main", source, "main");
+    if (!backup) return 0;
     int rc;
     int waited_ms = 0;
     do {
-        rc = sqlite3_backup_step(b, -1);
+        rc = sqlite3_backup_step(backup, -1);
         if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) {
             sqlite3_sleep(10);
             waited_ms += 10;
         }
     } while ((rc == SQLITE_BUSY || rc == SQLITE_LOCKED) && waited_ms < 3000);
-    int finish_rc = sqlite3_backup_finish(b);
-    int ok = rc == SQLITE_DONE && finish_rc == SQLITE_OK;
-    if (ok) {
-        sqlite3_stmt *check = NULL;
-        if (sqlite3_prepare_v2(dst, "PRAGMA integrity_check;", -1, &check, NULL) == SQLITE_OK &&
-            sqlite3_step(check) == SQLITE_ROW) {
-            const unsigned char *integrity = sqlite3_column_text(check, 0);
-            ok = integrity && strcmp((const char *)integrity, "ok") == 0 &&
-                 sqlite3_step(check) == SQLITE_DONE;
-        } else {
-            ok = 0;
-        }
-        sqlite3_finalize(check);
+    int finish_rc = sqlite3_backup_finish(backup);
+    return rc == SQLITE_DONE && finish_rc == SQLITE_OK && sqlite_integrity_ok(dest);
+}
+
+/* F-061: only a persisted Admin may create a new validated backup file. */
+int db_backup(int user_id, const char *role, const char *dest) {
+    sqlite3 *dst = NULL;
+    int created = 0, ok = 0;
+    if (!actor_role_is(user_id, role, "Admin", NULL)) return -3;
+    if (!g_db || !dest || !*dest || !create_empty_destination(dest)) return -1;
+    created = 1;
+    if (sqlite3_open_v2(dest, &dst, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK &&
+        copy_database(g_db, dst)) ok = 1;
+    if (dst && sqlite3_close(dst) != SQLITE_OK) ok = 0;
+    if (!ok && created) remove(dest);
+    return ok ? 0 : -1;
+}
+
+/* Restore is copy-to-new-file: it never replaces the active DB or an existing
+ * destination. Validate the source before creating the target. */
+int db_restore_backup(int user_id, const char *role, const char *backup_path,
+                      const char *dest_path) {
+    sqlite3 *source = NULL, *dest = NULL;
+    int created = 0, ok = 0;
+    if (!actor_role_is(user_id, role, "Admin", NULL)) return -3;
+    if (!backup_path || !*backup_path || !dest_path || !*dest_path ||
+        sqlite3_open_v2(backup_path, &source, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK) {
+        if (source) sqlite3_close(source);
+        return -1;
     }
-    sqlite3_close(dst);
+    if (!sqlite_integrity_ok(source) || !create_empty_destination(dest_path)) {
+        sqlite3_close(source);
+        return -1;
+    }
+    created = 1;
+    if (sqlite3_open_v2(dest_path, &dest, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK &&
+        copy_database(source, dest)) ok = 1;
+    if (dest && sqlite3_close(dest) != SQLITE_OK) ok = 0;
+    if (sqlite3_close(source) != SQLITE_OK) ok = 0;
+    if (!ok && created) remove(dest_path);
     return ok ? 0 : -1;
 }
 

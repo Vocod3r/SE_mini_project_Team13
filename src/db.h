@@ -73,7 +73,10 @@ int  db_set_payment_status(int user_id, const char *role, int bill_id, const cha
 
 /* Reports and admin (F-060 to F-062) */
 int  db_daily_report(const char *date);
-int  db_backup(const char *dest_path);
+int  db_backup(int user_id, const char *role, const char *dest_path);
+/* Restore a validated backup into a new, non-existing destination database. */
+int  db_restore_backup(int user_id, const char *role, const char *backup_path,
+                       const char *dest_path);
 int  db_health_check(void);
 int  db_get_prescriptions(int user_id, const char *role, int patient_id);
 /* Passing records=NULL and capacity=0 returns the total count. Otherwise the

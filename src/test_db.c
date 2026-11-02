@@ -2,7 +2,7 @@
 #include "db.h"
 
 int main(void) {
-    remove("t_db_backup.db");
+    remove("t_db_backup.db"); remove("t_db_backup.db-wal"); remove("t_db_backup.db-shm");
     db_open(":memory:");
     db_init_schema("schema.sql");
 
@@ -39,10 +39,10 @@ int main(void) {
     printf("search after archive (expect nothing):\n");
     db_search_patient("Asha");
 
-    printf("backup = %d (expect 0)\n", db_backup("t_db_backup.db"));
+    printf("backup = %d (expect 0)\n", db_backup(admin_id, "Admin", "t_db_backup.db"));
     printf("health = %d (expect 0)\n", db_health_check());
 
     db_close();
-    remove("t_db_backup.db");
+    remove("t_db_backup.db"); remove("t_db_backup.db-wal"); remove("t_db_backup.db-shm");
     return 0;
 }

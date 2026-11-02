@@ -48,3 +48,7 @@ The final performance fixture asserted exactly 10,000 patient rows. In the stand
 ## Sprint 2 final verification
 
 On 2026-11-02, after the prescription-history authorization and long-history tests were added, the same Ubuntu 24.04 Docker make ci pipeline exited **0**. All eight test executables passed in both the standard and ASan/UBSan passes. Added TC-Rx-02 checks cover persisted Doctor/Admin identity, forged-role rejection, invalid IDs, empty history, visit-date order, all available prescription detail fields, insufficient result capacity, and 66 prescription rows. The patient lookup timing from that later run is not reported here because Sprint 2 made no performance changes and the run was for regression validation.
+
+## Sprint 3 final verification
+
+On 2026-11-02, after Admin-only backup/restore, exclusive destination creation, and restoration tests were added, the Ubuntu 24.04 Docker make ci pipeline exited **0**. All eight test executables passed in both standard and ASan/UBSan runs. TC-Rep-02 checks backup/restore integrity and content preservation, persisted Admin authorization, invalid/missing sources and paths, and refusal to overwrite existing destinations. A corrupt source is rejected before restore output is created.

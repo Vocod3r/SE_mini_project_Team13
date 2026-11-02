@@ -7,8 +7,9 @@ The repository contains no authoritative earlier sprint allocations or sprint co
 ## Status
 
 - Sprint 1: committed and pushed as `1cedd6b7655ef6ed44b33829ee808b2675706036` on `feat/sprint-1-core`.
-- Sprint 2: implementation and verification complete; dedicated commit and push are next.
-- Sprints 3–7: not started. Each receives a separate implementation or completion-evidence commit and push after its full suite passes.
+- Sprint 2: committed and pushed as `3b5567fe01b91c7cbedc44f9c49be0ff278c2975` on `feat/sprint-1-core`.
+- Sprint 3: implementation and verification complete; dedicated commit and push are next.
+- Sprints 4–7: not started. Each receives a separate implementation or completion-evidence commit and push after its full suite passes.
 - The prescription mapping is HMS-F-040 recording, HMS-F-041 retrieval, AC-041 chronological order, and TC-Rx-02 retrieval test.
 
 ## Sprint 1 — Foundation
@@ -25,13 +26,13 @@ The repository contains no authoritative earlier sprint allocations or sprint co
 
 **Delivered:** Identity-based Doctor/Admin history retrieval checks the persisted staff role at the DAL, counts before allocating so all rows can be returned, and prints visit date, medicines, dosage, and notes chronologically. Tests cover invalid IDs, no history, forged role, field contents, capacity errors, and 66 prescriptions. The patient-selection/login menu remains in Sprint 6. See `SPRINT_2_COMPLETION_REPORT.md`.
 
-## Sprint 3 — Patient database backup
+## Sprint 3 — Patient database backup (implemented; awaiting dedicated commit/push)
 
 **Requirements:** HMS-F-061, AC-061, TC-Rep-02.
 
 **Existing work to reuse:** Sprint 1 added SQLite online backup completion checks, integrity validation, and isolated backup-open/data/schema tests.
 
-**Remaining work:** Add an Admin-controlled workflow, safe destination handling and clear failure reporting, plus a restore operation into a separate database path. Test restoration and incomplete/invalid backups without touching an operational database.
+**Delivered:** The backup and restore APIs verify the persisted Admin role, require a new destination file, validate backup integrity, preserve schema/data, and clean up failed outputs. Restoration copies into a separate database without overwriting an existing database. Tests cover unauthorized access, invalid source, missing directories, integrity, contents, and no-overwrite behavior. Admin menu integration remains in Sprint 6. See `SPRINT_3_COMPLETION_REPORT.md`.
 
 ## Sprint 4 — Performance
 
