@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "sqlite3.h"
 #include "db.h"
 #include "consult.h"
 #include "patient.h"
@@ -38,6 +39,30 @@ int main(void) {
     int bill = db_create_bill(receptionist_id, "Receptionist", v2);
     CHECK("visit ids valid", v1 > 0 && v2 > 0);
     CHECK("bill created", bill > 0);
+	sqlite3 *test_db = NULL;
+sqlite3_stmt *stmt = NULL;
+
+int amount_matches = 0;
+
+if (sqlite3_open("t_clin.db", &test_db) == SQLITE_OK) {
+    if (sqlite3_prepare_v2(test_db,
+        "SELECT amount FROM bills WHERE bill_id=?;",
+        -1, &stmt, NULL) == SQLITE_OK) {
+
+        sqlite3_bind_int(stmt, 1, bill);
+
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            double amount = sqlite3_column_double(stmt, 0);
+            amount_matches = (amount == 500.0);
+        }
+    }
+}
+
+CHECK("bill amount matches doctor's consultation fee (500.00)",
+      amount_matches);
+
+if (stmt) sqlite3_finalize(stmt);
+if (test_db) sqlite3_close(test_db);
     CHECK("bill marked paid", db_set_payment_status(receptionist_id, "Receptionist", bill, "Paid") == 0);
     CHECK("archive keeps history",
           patient_archive(admin_id, "Admin", p) == 0 && consult_history("Admin", p) == 2);
