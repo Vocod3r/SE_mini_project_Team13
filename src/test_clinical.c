@@ -1,74 +1,161 @@
+
 #include <stdio.h>
+#include <string.h>
 #include "sqlite3.h"
 #include "db.h"
 #include "consult.h"
 #include "patient.h"
 
 static int fails = 0;
-#define CHECK(name, cond) do { printf("%s: %s\n", (cond) ? "PASS" : "FAIL", name); \
-                               if (!(cond)) fails++; } while (0)
+
+#define CHECK(name, cond) do { \
+    printf("%s: %s\n", (cond) ? "PASS" : "FAIL", name); \
+    if (!(cond)) fails++; \
+} while (0)
 
 int main(void) {
-    remove("t_clin.db"); remove("t_clin.db-wal"); remove("t_clin.db-shm");
+    remove("t_clin.db");
+    remove("t_clin.db-wal");
+    remove("t_clin.db-shm");
+
     db_open("t_clin.db");
     db_init_schema("schema.sql");
 
-    int admin_id = db_create_staff(0, "Admin", "admin", "testhash", "testsalt", "Admin");
-    int receptionist_id = db_create_staff(admin_id, "Admin", "reception", "testhash", "testsalt", "Receptionist");
-    int doctor_user_id = db_create_staff(admin_id, "Admin", "doctor", "testhash", "testsalt", "Doctor");
-    int doc = db_add_doctor(admin_id, "Admin", "Dr. Mehta", "General", 500.0);
-    int p = db_add_patient(receptionist_id, "Receptionist", "Asha Rao", 30, "F", "9876543210", "Chennai", "O+");
+    int admin_id = db_create_staff(
+        0, "Admin", "admin", "testhash", "testsalt", "Admin");
 
-    int a1 = db_book_appointment(receptionist_id, p, doc, "2026-11-03", "10:00");
-    int a2 = db_book_appointment(receptionist_id, p, doc, "2026-11-04", "10:00");
-    int v1 = db_add_visit_and_rx(doctor_user_id, "Doctor", a1, "Fever", "Paracetamol", "500mg", "3 days");
-    int v2 = db_add_visit_and_rx(doctor_user_id, "Doctor", a2, "Cough", "Syrup", "5ml", "5 days");
+    int receptionist_id = db_create_staff(
+        admin_id, "Admin", "reception",
+        "testhash", "testsalt", "Receptionist");
+
+    int doctor_user_id = db_create_staff(
+        admin_id, "Admin", "doctor",
+        "testhash", "testsalt", "Doctor");
+
+    int doc = db_add_doctor(
+        admin_id, "Admin", "Dr. Mehta", "General", 500.0);
+
+    int p = db_add_patient(
+        receptionist_id, "Receptionist",
+        "Asha Rao", 30, "F", "9876543210", "Chennai", "O+");
+
+    int a1 = db_book_appointment(
+        receptionist_id, p, doc, "2026-11-03", "10:00");
+
+    int a2 = db_book_appointment(
+        receptionist_id, p, doc, "2026-11-04", "10:00");
+
+    int v1 = db_add_visit_and_rx(
+        doctor_user_id, "Doctor", a1,
+        "Fever", "Paracetamol", "500mg", "3 days");
+
+    int v2 = db_add_visit_and_rx(
+        doctor_user_id, "Doctor", a2,
+        "Cough", "Syrup", "5ml", "5 days");
 
     printf("--- HMS-F-013 consult_history ---\n");
+
     CHECK("history has 2 visits", consult_history("Doctor", p) == 2);
-    CHECK("admin allowed",        consult_history("Admin", p) == 2);
-    CHECK("receptionist refused", consult_history("Receptionist", p) == -3);
+    CHECK("admin allowed", consult_history("Admin", p) == 2);
+    CHECK("receptionist refused",
+          consult_history("Receptionist", p) == -3);
 
     printf("--- HMS-F-041 consult_prescriptions ---\n");
-    CHECK("2 prescriptions", consult_prescriptions(doctor_user_id, "Doctor", p) == 2);
-    CHECK("receptionist refused", consult_prescriptions(receptionist_id, "Receptionist", p) == -3);
+
+    CHECK("2 prescriptions",
+          consult_prescriptions(doctor_user_id, "Doctor", p) == 2);
+
+    CHECK("receptionist refused",
+          consult_prescriptions(receptionist_id, "Receptionist", p) == -3);
+
     CHECK("persisted receptionist role cannot be claimed as Doctor",
           consult_prescriptions(receptionist_id, "Doctor", p) == -3);
 
     printf("--- e2e: register -> book -> consult -> bill -> pay ---\n");
+
     int bill = db_create_bill(receptionist_id, "Receptionist", v2);
+
     CHECK("visit ids valid", v1 > 0 && v2 > 0);
     CHECK("bill created", bill > 0);
-	sqlite3 *test_db = NULL;
-sqlite3_stmt *stmt = NULL;
 
-int amount_matches = 0;
+    /* Verify bill amount */
+    sqlite3 *test_db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    int amount_matches = 0;
 
-if (sqlite3_open("t_clin.db", &test_db) == SQLITE_OK) {
-    if (sqlite3_prepare_v2(test_db,
-        "SELECT amount FROM bills WHERE bill_id=?;",
-        -1, &stmt, NULL) == SQLITE_OK) {
+    if (sqlite3_open("t_clin.db", &test_db) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(
+                test_db,
+                "SELECT amount FROM bills WHERE bill_id=?;",
+                -1, &stmt, NULL) == SQLITE_OK) {
 
-        sqlite3_bind_int(stmt, 1, bill);
+            sqlite3_bind_int(stmt, 1, bill);
 
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            double amount = sqlite3_column_double(stmt, 0);
-            amount_matches = (amount == 500.0);
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                double amount = sqlite3_column_double(stmt, 0);
+                amount_matches = (amount == 500.0);
+            }
         }
     }
-}
 
-CHECK("bill amount matches doctor's consultation fee (500.00)",
-      amount_matches);
+    CHECK("bill amount matches doctor's consultation fee (500.00)",
+          amount_matches);
 
-if (stmt) sqlite3_finalize(stmt);
-if (test_db) sqlite3_close(test_db);
-    CHECK("bill marked paid", db_set_payment_status(receptionist_id, "Receptionist", bill, "Paid") == 0);
+    if (stmt) sqlite3_finalize(stmt);
+    if (test_db) sqlite3_close(test_db);
+
+    /* Verify payment update */
+    CHECK("bill marked paid",
+          db_set_payment_status(
+              receptionist_id, "Receptionist", bill, "Paid") == 0);
+
+    /* Verify payment status persisted in database */
+    sqlite3 *payment_db = NULL;
+    sqlite3_stmt *payment_stmt = NULL;
+    int payment_persisted = 0;
+
+    if (sqlite3_open("t_clin.db", &payment_db) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(
+                payment_db,
+                "SELECT payment_status FROM bills WHERE bill_id=?;",
+                -1, &payment_stmt, NULL) == SQLITE_OK) {
+
+            sqlite3_bind_int(payment_stmt, 1, bill);
+
+            if (sqlite3_step(payment_stmt) == SQLITE_ROW) {
+                const unsigned char *status =
+                    sqlite3_column_text(payment_stmt, 0);
+
+                payment_persisted =
+                    status && strcmp((const char *)status, "Paid") == 0;
+            }
+        }
+    }
+
+    CHECK("payment status persists as Paid", payment_persisted);
+
+    if (payment_stmt) sqlite3_finalize(payment_stmt);
+    if (payment_db) sqlite3_close(payment_db);
+
+    /* Verify invalid payment status is rejected */
+    CHECK("invalid payment status rejected",
+          db_set_payment_status(
+              receptionist_id, "Receptionist", bill, "Maybe") == -1);
+
+    printf("--- Archive history ---\n");
+
     CHECK("archive keeps history",
-          patient_archive(admin_id, "Admin", p) == 0 && consult_history("Admin", p) == 2);
+          patient_archive(admin_id, "Admin", p) == 0 &&
+          consult_history("Admin", p) == 2);
 
     db_close();
-    remove("t_clin.db"); remove("t_clin.db-wal"); remove("t_clin.db-shm");
+
+    remove("t_clin.db");
+    remove("t_clin.db-wal");
+    remove("t_clin.db-shm");
+
     printf(fails ? "RESULT: %d FAILED\n" : "RESULT: ALL PASSED\n", fails);
+
     return fails ? 1 : 0;
 }
+
