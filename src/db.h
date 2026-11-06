@@ -98,6 +98,7 @@ int  db_set_payment_status(int user_id, const char *role, int bill_id, const cha
 
 /* Reports and admin (F-060 to F-062) */
 int  db_daily_report(const char *date);
+int  db_print_daily_report(int user_id, const char *role, const char *date);  /* F-060: Admin only, table + status summary */
 int  db_backup(int user_id, const char *role, const char *dest_path);
 /* Restore a validated backup into a new, non-existing destination database. */
 int  db_restore_backup(int user_id, const char *role, const char *backup_path,

@@ -13,10 +13,25 @@
 #include "appt_view.h"
 #include "consult.h"
 #include "db.h"
+#include "input.h"
+#include "report.h"
+#include "session.h"
+
+/* HMS-SR-005: while a user is signed in, every prompt watches the idle timer. */
+static Session *g_session = NULL;
+static time_t (*g_clock)(void) = NULL;
+void console_set_clock(time_t (*clock)(void)) { g_clock = clock; }
+static int g_idle_out = 0;
 
 static int input(const char *label, char *out, size_t cap) {
     printf("%s", label);
+    fflush(stdout);
+    if (g_session && session_wait_input(stdin, g_session) == 0) { g_idle_out = 1; return 0; }
     if (!fgets(out, (int)cap, stdin)) return 0;
+    if (g_session) {
+        if (session_expired(g_session)) { g_idle_out = 1; out[0] = '\0'; return 0; }  /* typed after the timeout: discard */
+        session_touch(g_session);
+    }
     size_t n = strlen(out);
     if (n && out[n - 1] == '\n') out[n - 1] = '\0';
     else { int c; while ((c = getchar()) != '\n' && c != EOF) {} }
@@ -63,6 +78,16 @@ static int number(const char *label, int *value) {
     return 1;
 }
 
+/* Date prompt built on input() so the idle timer watches it too; re-asks up to 3 times. */
+static int ask_date(const char *label, char *out, size_t cap) {
+    for (int tries = 0; tries < 3; tries++) {
+        if (!input(label, out, cap)) return -1;
+        if (input_valid_date(out)) return 0;
+        puts("  Please enter a real date as YYYY-MM-DD, for example 2026-11-03.");
+    }
+    return -1;
+}
+
 static int staff_count(sqlite3 *db) {
     sqlite3_stmt *st = NULL;
     int count = -1;
@@ -75,10 +100,14 @@ static int staff_count(sqlite3 *db) {
 static void add_patient(const User *u) {
     char name[128], gender[16], phone[32], address[256], bg[16]; int age;
     if (!input("Name: ", name, sizeof name) || !number("Age: ", &age) ||
-        !input("Gender: ", gender, sizeof gender) || !input("Phone: ", phone, sizeof phone) ||
-        !input("Address: ", address, sizeof address) || !input("Blood group: ", bg, sizeof bg)) {
-        puts("Invalid or incomplete input."); return;
+        !input("Gender (M/F/O): ", gender, sizeof gender) || !input("Phone: ", phone, sizeof phone) ||
+        !input("Address: ", address, sizeof address) || !input("Blood group (e.g. O+): ", bg, sizeof bg)) {
+        if (!g_idle_out) puts("Invalid or incomplete input.");
+        return;
     }
+    if (!input_valid_name(name, 100)) { puts("Name must contain letters only (spaces, . ' - allowed), up to 100 characters."); return; }
+    if (age > 130) { puts("Age must be between 0 and 130."); return; }
+    if (!input_valid_phone(phone)) { puts("Phone must be 10 to 13 digits, with an optional leading +."); return; }
     printf("Patient result: %d\n", service_add_patient(u, name, age, gender, phone, address, bg));
 }
 
@@ -97,8 +126,17 @@ static void book(const User *u) {
     int pid, did; char date[16], slot[64];
     if (!number("Patient ID: ", &pid) || !number("Doctor ID: ", &did) ||
         !input("Date (YYYY-MM-DD): ", date, sizeof date) ||
-        !input("Time slot: ", slot, sizeof slot)) { puts("Invalid input."); return; }
-    printf("Appointment result: %d\n", service_book_appointment(u, pid, did, date, slot));
+        !input("Time slot (HH:MM, e.g. 09:30): ", slot, sizeof slot)) {
+        if (!g_idle_out) puts("Invalid input.");
+        return;
+    }
+    if (!input_valid_date(date)) { puts("That is not a real date. Use YYYY-MM-DD, for example 2026-11-10."); return; }
+    if (!input_valid_time(slot)) { puts("That is not a valid time. Use HH:MM, for example 09:30."); return; }
+    int rc = service_book_appointment(u, pid, did, date, slot);
+    if (rc > 0) printf("Appointment booked. Appointment ID: %d\n", rc);
+    else if (rc == -2) puts("That doctor is already booked at that time. Please choose another slot.");
+    else if (rc == -3) puts("You are not allowed to book appointments.");
+    else puts("Could not book. Check that the patient (not archived) and doctor IDs exist.");
 }
 
 static void consult(const User *u) {
@@ -127,15 +165,38 @@ static void add_doctor(const User *u) {
 }
 
 static void schedule(const User *u) {
+    int doctor; char date[16], mode[8];
+    if (!number("Doctor ID: ", &doctor) || !input("Show one day or a week? (d/w): ", mode, sizeof mode)) return;
+    int week = (mode[0] == 'w' || mode[0] == 'W');
+    if (ask_date(week ? "First day of the week (YYYY-MM-DD): " : "Date (YYYY-MM-DD): ",
+                 date, sizeof date) != 0) return;
+    int rows = week ? appt_schedule_week(u->role, doctor, date) : appt_schedule_day(u->role, doctor, date);
+    if (rows == 0) puts("No appointments for that doctor in that period.");
+    else if (rows < 0) puts("Could not show the schedule.");
+}
+
+static void queue(const User *u) {
     int doctor; char date[16];
-    if (!number("Doctor ID: ", &doctor) || !input("Date (YYYY-MM-DD): ", date, sizeof date)) return;
-    printf("Schedule rows: %d\n", appt_schedule_day(u->role, doctor, date));
+    if (!number("Doctor ID: ", &doctor) ||
+        ask_date("Date (YYYY-MM-DD): ", date, sizeof date) != 0) return;
+    int rc = appt_queue(u->user_id, u->role, doctor, date);
+    if (rc == -3) puts("You are not allowed to view this queue.");
+    else if (rc < 0) puts("Could not show the queue. Check the doctor ID.");
+}
+
+static void slip(const User *u) {
+    int appt;
+    if (!number("Appointment ID: ", &appt)) return;
+    int rc = appt_print_slip(u->role, appt);
+    if (rc == -1) puts("No appointment with that ID.");
+    else if (rc == -2) puts("That appointment is cancelled or already completed, so no slip is issued.");
+    else if (rc == -3) puts("You are not allowed to print slips.");
 }
 
 static int role_allows(const char *role, int option) {
-    if (!strcmp(role, "Admin")) return option >= 1 && option <= 12;
-    if (!strcmp(role, "Receptionist")) return option >= 1 && option <= 4;
-    return option == 2 || option == 4 || option == 5 || option == 6;
+    if (!strcmp(role, "Admin")) return option >= 1 && option <= 14;
+    if (!strcmp(role, "Receptionist")) return (option >= 1 && option <= 4) || option == 13 || option == 14;
+    return option == 2 || option == 4 || option == 5 || option == 6 || option == 13;
 }
 
 int console_run(sqlite3 *db) {
@@ -158,23 +219,32 @@ int console_run(sqlite3 *db) {
             puts("Login failed or account is locked."); continue;
         }
         printf("Signed in as %s (%s).\n", user.username, user.role);
+        Session sess;
+        session_init(&sess, SESSION_IDLE_SECONDS, g_clock);
+        g_session = &sess; g_idle_out = 0;
         for (;;) {
             puts("\n1 Add patient  2 Search patients");
             if (strcmp(user.role, "Doctor")) puts("3 Book appointment");
-            puts("4 Doctor schedule");
+            puts("4 Doctor schedule (day or week)  13 Doctor patient queue");
+            if (strcmp(user.role, "Doctor")) puts("14 Print appointment slip");
             if (strcmp(user.role, "Receptionist"))
                 puts("5 Record visit/prescription  6 Prescription history");
             if (!strcmp(user.role, "Admin"))
                 puts("7 Doctors  8 Add doctor  9 Create staff  10 Backup  11 Restore  12 Daily report/health");
             puts("0 Sign out");
             int option;
-            if (!number("Choice: ", &option)) { puts("Enter a valid menu number."); continue; }
+            if (!number("Choice: ", &option)) {
+                if (g_idle_out) break;
+                puts("Enter a valid menu number."); continue;
+            }
             if (option == 0) break;
             if (!role_allows(user.role, option)) { puts("This role cannot use that option."); continue; }
             if (option == 1) add_patient(&user);
             else if (option == 2) search_patient(&user);
             else if (option == 3) book(&user);
             else if (option == 4) schedule(&user);
+            else if (option == 13) queue(&user);
+            else if (option == 14) slip(&user);
             else if (option == 5) consult(&user);
             else if (option == 6) {
                 int patient; if (number("Patient ID: ", &patient))
@@ -192,9 +262,17 @@ int console_run(sqlite3 *db) {
                     printf("Restore result: %d\n", db_restore_backup(user.user_id, user.role, source, dest));
             } else if (option == 12) {
                 char date[16];
-                if (input("Report date (YYYY-MM-DD): ", date, sizeof date)) db_daily_report(date);
-                printf("Health result: %d\n", db_health_check());
+                if (ask_date("Report date (YYYY-MM-DD): ", date, sizeof date) == 0 &&
+                    report_daily(user.user_id, user.role, date) < 0)
+                    puts("Could not produce the report.");
+                if (!g_idle_out) printf("Health result: %d\n", db_health_check());
             }
+            if (g_idle_out) break;
+        }
+        g_session = NULL;
+        if (g_idle_out) {
+            puts("\nYou were logged out after 10 minutes of inactivity. Please log in again.");
+            g_idle_out = 0;
         }
     }
 }

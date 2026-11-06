@@ -971,6 +971,50 @@ int db_daily_report(const char *date) {
     return n;
 
 }
+/* True when s is a real YYYY-MM-DD calendar date (SQLite's date() is NULL otherwise). */
+static int date_ok(const char *s) {
+    if (!s) return 0;
+    sqlite3_stmt *st;
+    if (sqlite3_prepare_v2(g_db, "SELECT date(?1)=?1;", -1, &st, 0) != SQLITE_OK) return 0;
+    sqlite3_bind_text(st, 1, s, -1, SQLITE_STATIC);
+    int ok = (sqlite3_step(st) == SQLITE_ROW && sqlite3_column_int(st, 0) == 1);
+    sqlite3_finalize(st);
+    return ok;
+}
+
+/* F-060: every appointment on a day (all statuses) plus a status summary. Admin only.
+ * Returns the total number of appointments, -1 on error or bad date, -3 not permitted. */
+int db_print_daily_report(int user_id, const char *role, const char *date) {
+    if (!actor_role_is(user_id, role, "Admin", NULL)) return -3;
+    if (!g_db || !date_ok(date)) return -1;
+    sqlite3_stmt *st;
+    const char *sql =
+        "SELECT a.appt_id,a.time_slot,p.name,d.name,a.status FROM appointments a "
+        "JOIN patients p ON p.patient_id=a.patient_id "
+        "JOIN doctors d ON d.doctor_id=a.doctor_id "
+        "WHERE a.appt_date=? ORDER BY a.time_slot,a.appt_id;";
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) return -1;
+    sqlite3_bind_text(st, 1, date, -1, SQLITE_STATIC);
+    printf("Daily appointment report for %s\n", date);
+    printf("%-6s %-6s %-20s %-20s %s\n", "ID", "Time", "Patient", "Doctor", "Status");
+    int n = 0, booked = 0, resched = 0, done = 0, cancelled = 0;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        const char *status = (const char *)sqlite3_column_text(st, 4);
+        printf("#%-5d %-6s %-20.20s %-20.20s %s\n", sqlite3_column_int(st, 0),
+               sqlite3_column_text(st, 1), sqlite3_column_text(st, 2),
+               sqlite3_column_text(st, 3), status);
+        n++;
+        if (!strcmp(status, "Booked")) booked++;
+        else if (!strcmp(status, "Rescheduled")) resched++;
+        else if (!strcmp(status, "Completed")) done++;
+        else cancelled++;
+    }
+    sqlite3_finalize(st);
+    printf("Total: %d | Booked: %d | Rescheduled: %d | Completed: %d | Cancelled: %d\n",
+           n, booked, resched, done, cancelled);
+    return n;
+}
+
 /* F-041: count/fetch every prescription in chronological visit-date order. */
 int db_get_prescription_records(int user_id, const char *role, int pid,
                                 PrescriptionRecord *records, size_t capacity) {
