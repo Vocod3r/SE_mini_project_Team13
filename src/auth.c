@@ -47,7 +47,8 @@ static int derive_hash(const char *password, const unsigned char *salt,
 
 static int valid_role(const char *role) {
     return role && (!strcmp(role, "Admin") || !strcmp(role, "Doctor") ||
-                    !strcmp(role, "Receptionist"));
+                    !strcmp(role, "Receptionist") ||
+                    !strcmp(role, "Accountant"));
 }
 
 static int is_admin_actor(sqlite3 *db, int actor_id) {

@@ -152,7 +152,7 @@ static void create_staff(sqlite3 *db, const User *u) {
     char username[64], password[256], role[24];
     if (!input("New username: ", username, sizeof username) ||
         !password_input("Temporary password: ", password, sizeof password) ||
-        !input("Role (Admin/Doctor/Receptionist): ", role, sizeof role)) return;
+        !input("Role (Admin/Doctor/Receptionist/Accountant): ", role, sizeof role)) return;
     puts(service_create_staff(db, u, username, password, role) ?
          "Staff account created." : "Account creation failed or permission denied.");
 }
@@ -193,9 +193,65 @@ static void slip(const User *u) {
     else if (rc == -3) puts("You are not allowed to print slips.");
 }
 
+static void bill_create(const User *u) {
+    int visit; if (!number("Visit ID: ", &visit)) return;
+    int rc = db_create_bill(u->user_id, u->role, visit);
+    if (rc > 0) printf("Bill %d created.\n", rc);
+    else if (rc == -3) puts("You are not allowed to create bills.");
+    else puts("Could not create a bill (unknown visit or already billed).");
+}
+
+static void bill_status(const User *u) {
+    int bill; char st[16];
+    if (!number("Bill ID: ", &bill) || !input("Status (Paid/Pending): ", st, sizeof st)) return;
+    int rc = db_set_payment_status(u->user_id, u->role, bill, st);
+    puts(rc == 0 ? "Payment status updated." : rc == -3 ? "You are not allowed to do that." :
+         "Could not update (bad status, unknown bill, or bill already refunded).");
+}
+
+static void bill_discount(const User *u) {
+    int bill, amt;
+    if (!number("Bill ID: ", &bill) || !number("Discount amount (whole currency units): ", &amt)) return;
+    int rc = db_apply_discount(u->user_id, u->role, bill, (double)amt);
+    puts(rc == 0 ? "Discount applied." : rc == -3 ? "You are not allowed to give discounts." :
+         rc == -4 ? "Discount is above your limit (Accountant 20%, Admin 100%)." :
+         "Could not apply (unknown bill, or bill is not Pending).");
+}
+
+static void bill_refund(const User *u) {
+    int bill; char code[32], note[220];
+    if (!number("Bill ID: ", &bill) ||
+        !input("Reason code (DUPLICATE/CANCELLED_SERVICE/OVERCHARGE/OTHER): ", code, sizeof code) ||
+        !input("Note (optional, press Enter to skip): ", note, sizeof note)) return;
+    int rc = db_refund_bill(u->user_id, u->role, bill, code, note[0] ? note : NULL);
+    if (rc > 0) printf("Refund %d recorded.\n", rc);
+    else if (rc == -3) puts("You are not allowed to refund.");
+    else if (rc == -4) puts("Only a Paid bill that has not been refunded can be refunded.");
+    else puts("Refund failed: check the bill ID and the reason code.");
+}
+
+static void bill_reconcile(const User *u) {
+    char date[16];
+    if (ask_date("Date to reconcile (YYYY-MM-DD): ", date, sizeof date) != 0) return;
+    int rc = db_reconcile_day(u->user_id, u->role, date, NULL);
+    if (rc == -3) puts("You are not allowed to reconcile.");
+    else if (rc < 0) puts("Could not reconcile that date.");
+}
+
+static void bill_revenue(const User *u) {
+    char from[16], to[16];
+    if (ask_date("From date (YYYY-MM-DD): ", from, sizeof from) != 0 ||
+        ask_date("To date (YYYY-MM-DD): ", to, sizeof to) != 0) return;
+    int rc = db_print_revenue_report(u->user_id, u->role, from, to, NULL);
+    if (rc == -3) puts("You are not allowed to view revenue.");
+    else if (rc < 0) puts("Could not produce the report (check the dates).");
+}
+
 static int role_allows(const char *role, int option) {
-    if (!strcmp(role, "Admin")) return option >= 1 && option <= 14;
-    if (!strcmp(role, "Receptionist")) return (option >= 1 && option <= 4) || option == 13 || option == 14;
+    if (!strcmp(role, "Admin")) return option >= 1 && option <= 21;
+    if (!strcmp(role, "Accountant")) return option >= 15 && option <= 21;
+    if (!strcmp(role, "Receptionist")) return (option >= 1 && option <= 4) || option == 13 || option == 14 ||
+                                              option == 15 || option == 16;
     return option == 2 || option == 4 || option == 5 || option == 6 || option == 13;
 }
 
@@ -223,14 +279,23 @@ int console_run(sqlite3 *db) {
         session_init(&sess, SESSION_IDLE_SECONDS, g_clock);
         g_session = &sess; g_idle_out = 0;
         for (;;) {
-            puts("\n1 Add patient  2 Search patients");
-            if (strcmp(user.role, "Doctor")) puts("3 Book appointment");
-            puts("4 Doctor schedule (day or week)  13 Doctor patient queue");
-            if (strcmp(user.role, "Doctor")) puts("14 Print appointment slip");
-            if (strcmp(user.role, "Receptionist"))
-                puts("5 Record visit/prescription  6 Prescription history");
-            if (!strcmp(user.role, "Admin"))
-                puts("7 Doctors  8 Add doctor  9 Create staff  10 Backup  11 Restore  12 Daily report/health");
+            int is_acct = !strcmp(user.role, "Accountant");
+            if (!is_acct) {
+                puts("\n1 Add patient  2 Search patients");
+                if (strcmp(user.role, "Doctor")) puts("3 Book appointment");
+                puts("4 Doctor schedule (day or week)  13 Doctor patient queue");
+                if (strcmp(user.role, "Doctor")) puts("14 Print appointment slip");
+                if (strcmp(user.role, "Receptionist"))
+                    puts("5 Record visit/prescription  6 Prescription history");
+                if (!strcmp(user.role, "Admin"))
+                    puts("7 Doctors  8 Add doctor  9 Create staff  10 Backup  11 Restore  12 Daily report/health");
+            }
+            if (!strcmp(user.role, "Receptionist"))
+                puts("15 Create bill  16 Set payment status");
+            if (is_acct || !strcmp(user.role, "Admin")) {
+                puts("15 Create bill  16 Set payment status  17 Apply discount  18 Refund");
+                puts("19 Daily reconciliation  20 Revenue report  21 Outstanding dues");
+            }
             puts("0 Sign out");
             int option;
             if (!number("Choice: ", &option)) {
@@ -266,6 +331,15 @@ int console_run(sqlite3 *db) {
                     report_daily(user.user_id, user.role, date) < 0)
                     puts("Could not produce the report.");
                 if (!g_idle_out) printf("Health result: %d\n", db_health_check());
+            }
+            else if (option == 15) bill_create(&user);
+            else if (option == 16) bill_status(&user);
+            else if (option == 17) bill_discount(&user);
+            else if (option == 18) bill_refund(&user);
+            else if (option == 19) bill_reconcile(&user);
+            else if (option == 20) bill_revenue(&user);
+            else if (option == 21) {
+                if (db_print_outstanding_dues(user.user_id, user.role, NULL) < 0) puts("Could not list dues.");
             }
             if (g_idle_out) break;
         }

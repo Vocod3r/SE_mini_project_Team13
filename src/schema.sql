@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS staff (
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
-  role TEXT NOT NULL CHECK(role IN ('Admin','Doctor','Receptionist')),
+  role TEXT NOT NULL CHECK(role IN ('Admin','Doctor','Receptionist','Accountant')),
   failed_attempts INTEGER NOT NULL DEFAULT 0,
   locked_until INTEGER NOT NULL DEFAULT 0
 );
@@ -69,7 +69,20 @@ CREATE TABLE IF NOT EXISTS bills (
   visit_id INTEGER NOT NULL REFERENCES visits(visit_id),
   amount REAL NOT NULL,
   payment_status TEXT NOT NULL DEFAULT 'Pending' CHECK(payment_status IN ('Paid','Pending')),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  discount REAL NOT NULL DEFAULT 0 CHECK(discount >= 0),
+  paid_on TEXT
+);
+
+-- SMPT-45: one full refund per paid bill, always with a reason code.
+CREATE TABLE IF NOT EXISTS refunds (
+  refund_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bill_id INTEGER NOT NULL UNIQUE REFERENCES bills(bill_id),
+  amount REAL NOT NULL CHECK(amount >= 0),
+  reason_code TEXT NOT NULL CHECK(reason_code IN ('DUPLICATE','CANCELLED_SERVICE','OVERCHARGE','OTHER')),
+  note TEXT,
+  refunded_by INTEGER NOT NULL REFERENCES staff(staff_id),
+  refunded_on TEXT NOT NULL DEFAULT (date('now'))
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
