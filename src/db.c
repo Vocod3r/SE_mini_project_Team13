@@ -1203,6 +1203,8 @@ int db_refund_bill(int user_id, const char *role, int bill_id, const char *reaso
     if (!reason_code || !(!strcmp(reason_code, "DUPLICATE") || !strcmp(reason_code, "CANCELLED_SERVICE") ||
                           !strcmp(reason_code, "OVERCHARGE") || !strcmp(reason_code, "OTHER"))) return -1;
     if (note && strlen(note) > 200) return -1;
+    /* "OTHER" means none of the standard reasons applies, so the free text is required. */
+    if (!strcmp(reason_code, "OTHER") && (!note || !*note)) return -1;
     if (!begin_write()) return -1;
     sqlite3_stmt *st;
     double net = 0; int found = 0, paid = 0;
