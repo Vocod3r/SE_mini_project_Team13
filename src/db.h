@@ -113,4 +113,18 @@ int  db_delete_prescription(int user_id, const char *role, int rx_id);
  * persisted staff role is checked and all rows must fit in capacity. */
 int  db_get_prescription_records(int user_id, const char *role, int patient_id,
                                  PrescriptionRecord *records, size_t capacity);
+/* ---- Accountant billing (SMPT-44/45/46/47) ---- */
+typedef struct {
+    int paid_count; double collected;
+    int refund_count; double refunded;
+    double net;
+    int pending_count; double pending;
+} Reconciliation;
+
+int db_apply_discount(int user_id, const char *role, int bill_id, double discount);
+int db_refund_bill(int user_id, const char *role, int bill_id, const char *reason_code, const char *note);
+int db_reconcile_day(int user_id, const char *role, const char *date, Reconciliation *out);
+int db_print_revenue_report(int user_id, const char *role, const char *from, const char *to, Reconciliation *out);
+int db_print_outstanding_dues(int user_id, const char *role, double *total_out);
+
 #endif

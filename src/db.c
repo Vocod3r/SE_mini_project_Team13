@@ -46,6 +46,47 @@ void db_close(void) {
     if (g_db) { sqlite3_close(g_db); g_db = NULL; }
 }
 
+/* Upgrade databases created before the Accountant role / billing columns existed. */
+static int migrate_billing(void) {
+    sqlite3_stmt *st; int need_staff = 0, has_discount = 0, has_paid_on = 0;
+    if (sqlite3_prepare_v2(g_db, "SELECT instr(sql,'Accountant')=0 FROM sqlite_master "
+                           "WHERE type='table' AND name='staff';", -1, &st, 0) == SQLITE_OK) {
+        if (sqlite3_step(st) == SQLITE_ROW) need_staff = sqlite3_column_int(st, 0);
+        sqlite3_finalize(st);
+    }
+    if (sqlite3_prepare_v2(g_db, "SELECT name FROM pragma_table_info('bills');", -1, &st, 0) == SQLITE_OK) {
+        while (sqlite3_step(st) == SQLITE_ROW) {
+            const char *n = (const char *)sqlite3_column_text(st, 0);
+            if (n && !strcmp(n, "discount")) has_discount = 1;
+            if (n && !strcmp(n, "paid_on")) has_paid_on = 1;
+        }
+        sqlite3_finalize(st);
+    }
+    if (!has_discount && sqlite3_exec(g_db, "ALTER TABLE bills ADD COLUMN discount REAL NOT NULL DEFAULT 0;", 0, 0, 0) != SQLITE_OK) return -1;
+    if (!has_paid_on && sqlite3_exec(g_db, "ALTER TABLE bills ADD COLUMN paid_on TEXT;", 0, 0, 0) != SQLITE_OK) return -1;
+    if (need_staff) {
+        /* SQLite cannot alter a CHECK, so rebuild staff (rows and ids preserved). */
+        const char *sql =
+            "PRAGMA foreign_keys=OFF;"
+            "BEGIN;"
+            "CREATE TABLE staff_new (staff_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, salt TEXT NOT NULL,"
+            " role TEXT NOT NULL CHECK(role IN ('Admin','Doctor','Receptionist','Accountant')),"
+            " failed_attempts INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0);"
+            "INSERT INTO staff_new SELECT staff_id,username,password_hash,salt,role,failed_attempts,locked_until FROM staff;"
+            "DROP TABLE staff;"
+            "ALTER TABLE staff_new RENAME TO staff;"
+            "COMMIT;"
+            "PRAGMA foreign_keys=ON;";
+        if (sqlite3_exec(g_db, sql, 0, 0, 0) != SQLITE_OK) {
+            sqlite3_exec(g_db, "ROLLBACK;", 0, 0, 0);
+            sqlite3_exec(g_db, "PRAGMA foreign_keys=ON;", 0, 0, 0);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int db_init_schema(const char *schema_path) {
     FILE *f = fopen(schema_path, "rb");
     if (!f) return -1;
@@ -65,6 +106,7 @@ int db_init_schema(const char *schema_path) {
         sqlite3_free(err);
         return -1;
     }
+    if (migrate_billing() != 0) { fputs("billing migration error\n", stderr); return -1; }
     /* Older revisions created accounts in `users` with a DJB2 hash. Copy
      * those records into the canonical staff table without deleting or
      * rewriting the legacy rows. auth.c upgrades the hash after valid login. */
@@ -123,7 +165,7 @@ static int actor_is_staff(int user_id, const char *claimed_role) {
         const char *actual = (const char *)sqlite3_column_text(st, 0);
         allowed = actual && strcmp(actual, claimed_role) == 0 &&
                   (!strcmp(actual, "Admin") || !strcmp(actual, "Doctor") ||
-                   !strcmp(actual, "Receptionist"));
+                   !strcmp(actual, "Receptionist") || !strcmp(actual, "Accountant"));
     }
     sqlite3_finalize(st);
     return allowed;
@@ -631,7 +673,8 @@ int db_create_staff(int user_id, const char *role, const char *username,
     if (!role || strcmp(role, "Admin") != 0 || !can_manage_staff(user_id)) return -3;
     if (!username || !*username || strlen(username) > 60 || !hash || !salt || !begin_write()) return -1;
     if (!new_role || !(strcmp(new_role, "Admin") == 0 || strcmp(new_role, "Doctor") == 0 ||
-                       strcmp(new_role, "Receptionist") == 0)) return -1;
+                       strcmp(new_role, "Receptionist") == 0 ||
+                       strcmp(new_role, "Accountant") == 0)) return -1;
     sqlite3_stmt *st;
     const char *sql = "INSERT INTO staff(username,password_hash,salt,role) VALUES(?,?,?,?);";
     if (sqlite3_prepare_v2(g_db, sql, -1, &st, 0) != SQLITE_OK) { rollback_write(); return -1; }
@@ -908,7 +951,8 @@ int db_get_patient_history(int pid) {
 
 /* F-050: amount is taken from the doctor's fee; only one bill per visit */
 int db_create_bill(int user_id, const char *role, int visit_id) {
-    if (!actor_role_is(user_id, role, "Receptionist", "Admin")) return -3;
+    if (!actor_role_is(user_id, role, "Receptionist", "Admin") &&
+        !actor_role_is(user_id, role, "Accountant", NULL)) return -3;
     if (!begin_write()) return -1;
     sqlite3_stmt *st;
     const char *sql =
@@ -931,11 +975,14 @@ int db_create_bill(int user_id, const char *role, int visit_id) {
 
 /* F-051 */
 int db_set_payment_status(int user_id, const char *role, int bill_id, const char *status) {
-    if (!actor_role_is(user_id, role, "Receptionist", "Admin")) return -3;
+    if (!actor_role_is(user_id, role, "Receptionist", "Admin") &&
+        !actor_role_is(user_id, role, "Accountant", NULL)) return -3;
     if (!status || !(strcmp(status, "Paid") == 0 || strcmp(status, "Pending") == 0) ||
         !begin_write()) return -1;
     sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(g_db, "UPDATE bills SET payment_status=? WHERE bill_id=?;",
+    if (sqlite3_prepare_v2(g_db, "UPDATE bills SET payment_status=?1, "
+                           "paid_on=CASE WHEN ?1='Paid' THEN date('now') ELSE NULL END "
+                           "WHERE bill_id=?2 AND NOT EXISTS (SELECT 1 FROM refunds r WHERE r.bill_id=?2);",
                            -1, &st, 0) != SQLITE_OK) { rollback_write(); return -1; }
     sqlite3_bind_text(st, 1, status, -1, SQLITE_STATIC);
     sqlite3_bind_int(st, 2, bill_id);
@@ -1112,4 +1159,160 @@ int db_delete_prescription(int user_id, const char *role, int rx_id) {
         rollback_write(); return -1;
     }
     return 0;
+}
+
+/* ---------- Accountant billing: SMPT-44 / 45 / 46 / 47 ---------- */
+
+static int is_accountant_or_admin(int user_id, const char *role) {
+    return actor_role_is(user_id, role, "Accountant", "Admin");
+}
+
+/* SMPT-46: discount/waiver on a Pending bill. Accountant <= 20% of amount, Admin up to 100%.
+ * Returns 0 ok, -1 invalid/not found/not pending, -3 not permitted, -4 over the role's limit. */
+int db_apply_discount(int user_id, const char *role, int bill_id, double discount) {
+    if (!is_accountant_or_admin(user_id, role)) return -3;
+    if (!(discount >= 0) || !begin_write()) return -1;
+    sqlite3_stmt *st;
+    double amount = 0; int found = 0;
+    if (sqlite3_prepare_v2(g_db, "SELECT amount FROM bills WHERE bill_id=? AND payment_status='Pending';",
+                           -1, &st, 0) != SQLITE_OK) { rollback_write(); return -1; }
+    sqlite3_bind_int(st, 1, bill_id);
+    if (sqlite3_step(st) == SQLITE_ROW) { amount = sqlite3_column_double(st, 0); found = 1; }
+    sqlite3_finalize(st);
+    if (!found) { rollback_write(); return -1; }
+    double limit = strcmp(role, "Admin") == 0 ? 1.0 : 0.20;
+    if (discount > amount * limit + 0.005) { rollback_write(); return -4; }
+    if (sqlite3_prepare_v2(g_db, "UPDATE bills SET discount=? WHERE bill_id=?;", -1, &st, 0) != SQLITE_OK) {
+        rollback_write(); return -1;
+    }
+    sqlite3_bind_double(st, 1, discount);
+    sqlite3_bind_int(st, 2, bill_id);
+    int rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (rc != SQLITE_DONE || db_log_audit(user_id, "DISCOUNT", "bills", bill_id) != 0 || !commit_write()) {
+        rollback_write(); return -1;
+    }
+    return 0;
+}
+
+/* SMPT-45: full refund of a Paid bill with a mandatory reason code.
+ * Returns refund id, -1 invalid (bad code, unknown bill), -3 not permitted,
+ * -4 bill is not Paid or was already refunded. */
+int db_refund_bill(int user_id, const char *role, int bill_id, const char *reason_code, const char *note) {
+    if (!is_accountant_or_admin(user_id, role)) return -3;
+    if (!reason_code || !(!strcmp(reason_code, "DUPLICATE") || !strcmp(reason_code, "CANCELLED_SERVICE") ||
+                          !strcmp(reason_code, "OVERCHARGE") || !strcmp(reason_code, "OTHER"))) return -1;
+    if (note && strlen(note) > 200) return -1;
+    if (!begin_write()) return -1;
+    sqlite3_stmt *st;
+    double net = 0; int found = 0, paid = 0;
+    if (sqlite3_prepare_v2(g_db, "SELECT amount-discount, payment_status='Paid' FROM bills WHERE bill_id=?;",
+                           -1, &st, 0) != SQLITE_OK) { rollback_write(); return -1; }
+    sqlite3_bind_int(st, 1, bill_id);
+    if (sqlite3_step(st) == SQLITE_ROW) { net = sqlite3_column_double(st, 0); paid = sqlite3_column_int(st, 1); found = 1; }
+    sqlite3_finalize(st);
+    if (!found) { rollback_write(); return -1; }
+    if (!paid) { rollback_write(); return -4; }
+    if (sqlite3_prepare_v2(g_db,
+        "INSERT INTO refunds(bill_id,amount,reason_code,note,refunded_by) VALUES(?,?,?,?,?);",
+        -1, &st, 0) != SQLITE_OK) { rollback_write(); return -1; }
+    sqlite3_bind_int(st, 1, bill_id);
+    sqlite3_bind_double(st, 2, net);
+    sqlite3_bind_text(st, 3, reason_code, -1, SQLITE_STATIC);
+    if (note) sqlite3_bind_text(st, 4, note, -1, SQLITE_STATIC); else sqlite3_bind_null(st, 4);
+    sqlite3_bind_int(st, 5, user_id);
+    int rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (rc == SQLITE_CONSTRAINT) { rollback_write(); return -4; } /* already refunded */
+    if (rc != SQLITE_DONE) { rollback_write(); return -1; }
+    int id = (int)sqlite3_last_insert_rowid(g_db);
+    if (db_log_audit(user_id, "REFUND", "bills", bill_id) != 0 || !commit_write()) {
+        rollback_write(); return -1;
+    }
+    return id;
+}
+
+/* SMPT-44: reconcile one day's collections. Fills `out` (may be NULL) and prints a summary.
+ * Returns the number of bills paid that day, -1 bad date/error, -3 not permitted. */
+int db_reconcile_day(int user_id, const char *role, const char *date, Reconciliation *out) {
+    if (!is_accountant_or_admin(user_id, role)) return -3;
+    if (!g_db || !date_ok(date)) return -1;
+    Reconciliation r = {0, 0, 0, 0, 0, 0, 0};
+    sqlite3_stmt *st;
+    if (sqlite3_prepare_v2(g_db,
+        "SELECT COUNT(*), COALESCE(SUM(amount-discount),0) FROM bills WHERE payment_status='Paid' AND paid_on=?;",
+        -1, &st, 0) != SQLITE_OK) return -1;
+    sqlite3_bind_text(st, 1, date, -1, SQLITE_STATIC);
+    if (sqlite3_step(st) == SQLITE_ROW) { r.paid_count = sqlite3_column_int(st, 0); r.collected = sqlite3_column_double(st, 1); }
+    sqlite3_finalize(st);
+    if (sqlite3_prepare_v2(g_db, "SELECT COUNT(*), COALESCE(SUM(amount),0) FROM refunds WHERE refunded_on=?;",
+                           -1, &st, 0) != SQLITE_OK) return -1;
+    sqlite3_bind_text(st, 1, date, -1, SQLITE_STATIC);
+    if (sqlite3_step(st) == SQLITE_ROW) { r.refund_count = sqlite3_column_int(st, 0); r.refunded = sqlite3_column_double(st, 1); }
+    sqlite3_finalize(st);
+    if (sqlite3_prepare_v2(g_db,
+        "SELECT COUNT(*), COALESCE(SUM(amount-discount),0) FROM bills WHERE payment_status='Pending' AND date(created_at)=?;",
+        -1, &st, 0) != SQLITE_OK) return -1;
+    sqlite3_bind_text(st, 1, date, -1, SQLITE_STATIC);
+    if (sqlite3_step(st) == SQLITE_ROW) { r.pending_count = sqlite3_column_int(st, 0); r.pending = sqlite3_column_double(st, 1); }
+    sqlite3_finalize(st);
+    r.net = r.collected - r.refunded;
+    printf("Reconciliation for %s\n", date);
+    printf("  Paid bills:     %d  collected %.2f\n", r.paid_count, r.collected);
+    printf("  Refunds:        %d  refunded  %.2f\n", r.refund_count, r.refunded);
+    printf("  Net collection: %.2f\n", r.net);
+    printf("  Billed that day and still pending: %d  (%.2f)\n", r.pending_count, r.pending);
+    if (out) *out = r;
+    return r.paid_count;
+}
+
+/* SMPT-47: revenue between two dates (inclusive) by payment date, less refunds by refund date. */
+int db_print_revenue_report(int user_id, const char *role, const char *from, const char *to, Reconciliation *out) {
+    if (!is_accountant_or_admin(user_id, role)) return -3;
+    if (!g_db || !date_ok(from) || !date_ok(to) || strcmp(from, to) > 0) return -1;
+    Reconciliation r = {0, 0, 0, 0, 0, 0, 0};
+    sqlite3_stmt *st;
+    if (sqlite3_prepare_v2(g_db,
+        "SELECT COUNT(*), COALESCE(SUM(amount-discount),0), COALESCE(SUM(discount),0) "
+        "FROM bills WHERE payment_status='Paid' AND paid_on BETWEEN ?1 AND ?2;", -1, &st, 0) != SQLITE_OK) return -1;
+    sqlite3_bind_text(st, 1, from, -1, SQLITE_STATIC);
+    sqlite3_bind_text(st, 2, to, -1, SQLITE_STATIC);
+    double disc = 0;
+    if (sqlite3_step(st) == SQLITE_ROW) { r.paid_count = sqlite3_column_int(st, 0); r.collected = sqlite3_column_double(st, 1); disc = sqlite3_column_double(st, 2); }
+    sqlite3_finalize(st);
+    if (sqlite3_prepare_v2(g_db, "SELECT COUNT(*), COALESCE(SUM(amount),0) FROM refunds WHERE refunded_on BETWEEN ?1 AND ?2;",
+                           -1, &st, 0) != SQLITE_OK) return -1;
+    sqlite3_bind_text(st, 1, from, -1, SQLITE_STATIC);
+    sqlite3_bind_text(st, 2, to, -1, SQLITE_STATIC);
+    if (sqlite3_step(st) == SQLITE_ROW) { r.refund_count = sqlite3_column_int(st, 0); r.refunded = sqlite3_column_double(st, 1); }
+    sqlite3_finalize(st);
+    r.net = r.collected - r.refunded;
+    printf("Revenue report %s to %s\n", from, to);
+    printf("  Paid bills: %d  collected %.2f (discounts given %.2f)\n", r.paid_count, r.collected, disc);
+    printf("  Refunds:    %d  refunded  %.2f\n", r.refund_count, r.refunded);
+    printf("  Net revenue: %.2f\n", r.net);
+    if (out) *out = r;
+    return r.paid_count;
+}
+
+/* SMPT-47: every Pending bill with the patient, and the total owed.
+ * Returns the number of outstanding bills, -1 on error, -3 not permitted. */
+int db_print_outstanding_dues(int user_id, const char *role, double *total_out) {
+    if (!is_accountant_or_admin(user_id, role)) return -3;
+    sqlite3_stmt *st;
+    if (!g_db || sqlite3_prepare_v2(g_db,
+        "SELECT b.bill_id, p.name, date(b.created_at), b.amount-b.discount FROM bills b "
+        "JOIN visits v ON v.visit_id=b.visit_id JOIN appointments a ON a.appt_id=v.appt_id "
+        "JOIN patients p ON p.patient_id=a.patient_id WHERE b.payment_status='Pending' "
+        "ORDER BY b.created_at, b.bill_id;", -1, &st, 0) != SQLITE_OK) return -1;
+    int n = 0; double total = 0;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        printf("Bill #%d | %s | billed %s | due %.2f\n", sqlite3_column_int(st, 0),
+               sqlite3_column_text(st, 1), sqlite3_column_text(st, 2), sqlite3_column_double(st, 3));
+        total += sqlite3_column_double(st, 3); n++;
+    }
+    sqlite3_finalize(st);
+    printf("Outstanding bills: %d, total due %.2f\n", n, total);
+    if (total_out) *total_out = total;
+    return n;
 }
