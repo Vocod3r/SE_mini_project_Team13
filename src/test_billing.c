@@ -90,10 +90,39 @@ int main(void) {
     CHECK("reconcile after refund: net 0", db_reconcile_day(acct, "Accountant", today, &r) == 2 &&
           r.refund_count == 1 && r.refunded == 800.0 && r.net == 0.0);
 
+    /* SMPT-45 QA points: every reason code, every role, note boundary */
+    {
+        int ids[4], okc = 1;
+        for (int i = 0; i < 4; i++) {
+            int b = bill_for(doc, pat, doc_u, rec, "2026-12-10");
+            okc &= b > 0 && db_set_payment_status(acct, "Accountant", b, "Paid") == 0;
+            ids[i] = b;
+        }
+        CHECK("qa: four paid bills ready", okc);
+        CHECK("qa: DUPLICATE accepted", db_refund_bill(acct, "Accountant", ids[0], "DUPLICATE", NULL) > 0);
+        CHECK("qa: CANCELLED_SERVICE accepted", db_refund_bill(acct, "Accountant", ids[1], "CANCELLED_SERVICE", NULL) > 0);
+        CHECK("qa: OTHER without a note refused", db_refund_bill(acct, "Accountant", ids[3], "OTHER", NULL) == -1);
+        CHECK("qa: OTHER with empty note refused", db_refund_bill(acct, "Accountant", ids[3], "OTHER", "") == -1);
+        CHECK("qa: OTHER with a note accepted", db_refund_bill(acct, "Accountant", ids[3], "OTHER", "goodwill") > 0);
+        CHECK("qa: lower-case code refused", db_refund_bill(acct, "Accountant", ids[2], "overcharge", NULL) == -1);
+        CHECK("qa: Admin may refund (OVERCHARGE)", db_refund_bill(admin, "Admin", ids[2], "OVERCHARGE", NULL) > 0);
+        CHECK("qa: four reason codes stored",
+              scalar(F, "SELECT COUNT(DISTINCT reason_code) FROM refunds") == 4);
+        int b5 = bill_for(doc, pat, doc_u, rec, "2026-12-11");
+        db_set_payment_status(acct, "Accountant", b5, "Paid");
+        CHECK("qa: Doctor refused", db_refund_bill(doc_u, "Doctor", b5, "DUPLICATE", NULL) == -3);
+        CHECK("qa: forged Accountant claim by Doctor refused", db_refund_bill(doc_u, "Accountant", b5, "DUPLICATE", NULL) == -3);
+        char n200[201], n201[202];
+        memset(n200, 'x', 200); n200[200] = 0;
+        memset(n201, 'x', 201); n201[201] = 0;
+        CHECK("qa: 201-char note refused", db_refund_bill(acct, "Accountant", b5, "OTHER", n201) == -1);
+        CHECK("qa: 200-char note accepted", db_refund_bill(acct, "Accountant", b5, "OTHER", n200) > 0);
+    }
+
     /* SMPT-47 revenue */
     CHECK("revenue: bad range", db_print_revenue_report(acct, "Accountant", today, "2000-01-01", NULL) == -1);
     CHECK("revenue: net 0 after refund",
-          db_print_revenue_report(acct, "Accountant", "2000-01-01", "2999-12-31", &r) == 2 && r.net == 0.0);
+          db_print_revenue_report(acct, "Accountant", "2000-01-01", "2999-12-31", &r) == 7 && r.net == 0.0);
     CHECK("revenue: doctor refused", db_print_revenue_report(doc_u, "Doctor", today, today, NULL) == -3);
     CHECK("discount audited", scalar(F, "SELECT COUNT(*) FROM audit_log WHERE action='DISCOUNT'") == 2);
 
